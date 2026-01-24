@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>MyMindIL - המוח השני שלך</title>
+    
+    <!-- Telegram Web App SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <style>
+        /* RTL Support */
+        * {
+            direction: rtl;
+            text-align: right;
+        }
+        
+        /* Telegram theme integration */
+        :root {
+            --tg-theme-bg-color: #ffffff;
+            --tg-theme-text-color: #000000;
+            --tg-theme-hint-color: #999999;
+            --tg-theme-link-color: #2481cc;
+            --tg-theme-button-color: #2481cc;
+            --tg-theme-button-text-color: #ffffff;
+            --tg-theme-secondary-bg-color: #f4f4f5;
+        }
+        
+        body {
+            background-color: var(--tg-theme-bg-color);
+            color: var(--tg-theme-text-color);
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        }
+        
+        /* Sticky search bar */
+        .search-container {
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            background-color: var(--tg-theme-bg-color);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        /* Pinterest-style Masonry Grid */
+        .masonry-grid {
+            column-count: 2;
+            column-gap: 1rem;
+            padding: 1rem;
+        }
+        
+        @media (min-width: 768px) {
+            .masonry-grid {
+                column-count: 3;
+            }
+        }
+        
+        @media (min-width: 1024px) {
+            .masonry-grid {
+                column-count: 4;
+            }
+        }
+        
+        .masonry-item {
+            break-inside: avoid;
+            margin-bottom: 1rem;
+            border-radius: 12px;
+            overflow: hidden;
+            background-color: var(--tg-theme-secondary-bg-color);
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .masonry-item:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+        }
+        
+        .masonry-item img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        
+        .memory-content {
+            padding: 0.75rem;
+        }
+        
+        /* Content type badges */
+        .content-badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-left: 0.5rem;
+        }
+        
+        .badge-text { background: #dbeafe; color: #1e40af; }
+        .badge-image { background: #fce7f3; color: #9f1239; }
+        .badge-voice { background: #dcfce7; color: #166534; }
+        .badge-link { background: #fef3c7; color: #92400e; }
+        
+        /* Tags */
+        .tag {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            margin: 0.25rem;
+            background: var(--tg-theme-button-color);
+            color: var(--tg-theme-button-text-color);
+            border-radius: 6px;
+            font-size: 0.75rem;
+        }
+        
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.7);
+            z-index: 100;
+            overflow-y: auto;
+        }
+        
+        .modal-content {
+            background: var(--tg-theme-bg-color);
+            margin: 2rem auto;
+            padding: 2rem;
+            max-width: 600px;
+            border-radius: 16px;
+            position: relative;
+        }
+        
+        .close-modal {
+            position: absolute;
+            top: 1rem;
+            left: 1rem;
+            font-size: 2rem;
+            cursor: pointer;
+            color: var(--tg-theme-hint-color);
+        }
+        
+        /* Loading spinner */
+        .spinner {
+            border: 3px solid var(--tg-theme-secondary-bg-color);
+            border-top: 3px solid var(--tg-theme-button-color);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 2rem auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 4rem 2rem;
+            color: var(--tg-theme-hint-color);
+        }
+        
+        .empty-state-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <!-- Search Container -->
+    <div class="search-container">
+        <div class="p-4">
+            <div class="flex gap-2">
+                <input 
+                    type="text" 
+                    id="searchInput" 
+                    placeholder="חפש בזיכרונות..." 
+                    class="flex-1 px-4 py-3 rounded-lg border-2 focus:outline-none focus:border-blue-500"
+                    style="border-color: var(--tg-theme-hint-color); background: var(--tg-theme-secondary-bg-color);"
+                >
+                <button 
+                    id="searchBtn"
+                    class="px-6 py-3 rounded-lg font-semibold"
+                    style="background: var(--tg-theme-button-color); color: var(--tg-theme-button-text-color);"
+                >
+                    🔍
+                </button>
+            </div>
+            
+            <!-- Filter tabs -->
+            <div class="flex gap-2 mt-3 overflow-x-auto">
+                <button class="filter-btn active px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap" data-filter="all">
+                    הכל
+                </button>
+                <button class="filter-btn px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap" data-filter="text">
+                    📄 טקסט
+                </button>
+                <button class="filter-btn px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap" data-filter="image">
+                    🖼 תמונות
+                </button>
+                <button class="filter-btn px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap" data-filter="voice">
+                    🎤 הקלטות
+                </button>
+                <button class="filter-btn px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap" data-filter="link">
+                    🔗 קישורים
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Loading Spinner -->
+    <div id="loadingSpinner" class="spinner" style="display: none;"></div>
+    
+    <!-- Results Container -->
+    <div id="resultsContainer" class="masonry-grid"></div>
+    
+    <!-- Empty State -->
+    <div id="emptyState" class="empty-state" style="display: none;">
+        <div class="empty-state-icon">🔍</div>
+        <h3 class="text-xl font-bold mb-2">לא נמצאו תוצאות</h3>
+        <p>נסה לחפש משהו אחר או שלח תוכן חדש לבוט</p>
+    </div>
+    
+    <!-- Modal for full view -->
+    <div id="memoryModal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeModal()">&times;</span>
+            <div id="modalBody"></div>
+        </div>
+    </div>
+    
+    <script>
+        // Initialize Telegram Web App
+        const tg = window.Telegram.WebApp;
+        tg.ready();
+        tg.expand();
+        
+        // Apply Telegram theme
+        const applyTheme = () => {
+            const params = tg.themeParams;
+            if (params.bg_color) {
+                document.documentElement.style.setProperty('--tg-theme-bg-color', params.bg_color);
+            }
+            if (params.text_color) {
+                document.documentElement.style.setProperty('--tg-theme-text-color', params.text_color);
+            }
+            if (params.hint_color) {
+                document.documentElement.style.setProperty('--tg-theme-hint-color', params.hint_color);
+            }
+            if (params.link_color) {
+                document.documentElement.style.setProperty('--tg-theme-link-color', params.link_color);
+            }
+            if (params.button_color) {
+                document.documentElement.style.setProperty('--tg-theme-button-color', params.button_color);
+            }
+            if (params.button_text_color) {
+                document.documentElement.style.setProperty('--tg-theme-button-text-color', params.button_text_color);
+            }
+            if (params.secondary_bg_color) {
+                document.documentElement.style.setProperty('--tg-theme-secondary-bg-color', params.secondary_bg_color);
+            }
+        };
+        
+        applyTheme();
+        
+        // Get user ID from Telegram
+        const userId = tg.initDataUnsafe?.user?.id;
+        
+        if (!userId) {
+            document.getElementById('resultsContainer').innerHTML = 
+                '<div class="empty-state"><div class="empty-state-icon">⚠️</div><h3>שגיאה</h3><p>לא ניתן לזהות את המשתמש</p></div>';
+        }
+        
+        // State
+        let currentFilter = 'all';
+        let currentQuery = '';
+        
+        // Elements
+        const searchInput = document.getElementById('searchInput');
+        const searchBtn = document.getElementById('searchBtn');
+        const resultsContainer = document.getElementById('resultsContainer');
+        const loadingSpinner = document.getElementById('loadingSpinner');
+        const emptyState = document.getElementById('emptyState');
+        const modal = document.getElementById('memoryModal');
+        const modalBody = document.getElementById('modalBody');
+        
+        // Event listeners
+        searchBtn.addEventListener('click', performSearch);
+        searchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') performSearch();
+        });
+        
+        // Filter buttons
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentFilter = btn.dataset.filter;
+                performSearch();
+            });
+            
+            // Style filter buttons
+            btn.style.background = 'var(--tg-theme-secondary-bg-color)';
+            btn.style.color = 'var(--tg-theme-text-color)';
+        });
+        
+        // Style active filter
+        document.querySelector('.filter-btn.active').style.background = 'var(--tg-theme-button-color)';
+        document.querySelector('.filter-btn.active').style.color = 'var(--tg-theme-button-text-color)';
+        
+        // Search function
+        async function performSearch() {
+            const query = searchInput.value.trim();
+            currentQuery = query;
+            
+            showLoading();
+            
+            try {
+                const filters = currentFilter !== 'all' ? { content_type: currentFilter } : null;
+                
+                const endpoint = query ? '/api/search' : '/api/recent';
+                const payload = query ? {
+                    user_id: userId,
+                    query: query,
+                    limit: 50,
+                    filters: filters
+                } : null;
+                
+                const url = query ? endpoint : `${endpoint}?user_id=${userId}&limit=50${currentFilter !== 'all' ? '&content_type=' + currentFilter : ''}`;
+                
+                const response = await fetch(url, {
+                    method: query ? 'POST' : 'GET',
+                    headers: query ? { 'Content-Type': 'application/json' } : {},
+                    body: query ? JSON.stringify(payload) : null
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayResults(data.results);
+                } else {
+                    throw new Error(data.error || 'חיפוש נכשל');
+                }
+                
+            } catch (error) {
+                console.error('Search error:', error);
+                tg.showAlert('שגיאה בחיפוש: ' + error.message);
+                hideLoading();
+            }
+        }
+        
+        // Display results
+        function displayResults(memories) {
+            hideLoading();
+            
+            if (!memories || memories.length === 0) {
+                resultsContainer.innerHTML = '';
+                emptyState.style.display = 'block';
+                return;
+            }
+            
+            emptyState.style.display = 'none';
+            
+            // Filter by content type if needed
+            if (currentFilter !== 'all') {
+                memories = memories.filter(m => m.content_type === currentFilter);
+            }
+            
+            resultsContainer.innerHTML = memories.map(memory => createMemoryCard(memory)).join('');
+            
+            // Add click handlers
+            document.querySelectorAll('.masonry-item').forEach((item, index) => {
+                item.addEventListener('click', () => openModal(memories[index]));
+            });
+        }
+        
+        // Create memory card
+        function createMemoryCard(memory) {
+            const badgeClass = `badge-${memory.content_type}`;
+            const typeEmoji = {
+                text: '📄',
+                image: '🖼',
+                voice: '🎤',
+                link: '🔗'
+            }[memory.content_type] || '📌';
+            
+            const tags = memory.metadata?.tags || [];
+            const tagsHtml = tags.slice(0, 3).map(tag => `<span class="tag">${tag}</span>`).join('');
+            
+            const date = new Date(memory.created_at).toLocaleDateString('he-IL');
+            
+            return `
+                <div class="masonry-item" data-id="${memory.id}">
+                    <div class="memory-content">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="content-badge ${badgeClass}">${typeEmoji} ${memory.content_type}</span>
+                            <span class="text-xs" style="color: var(--tg-theme-hint-color);">${date}</span>
+                        </div>
+                        <p class="text-sm leading-relaxed">${memory.display_text}</p>
+                        ${tagsHtml ? `<div class="mt-2">${tagsHtml}</div>` : ''}
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Open modal
+        function openModal(memory) {
+            const typeEmoji = {
+                text: '📄',
+                image: '🖼',
+                voice: '🎤',
+                link: '🔗'
+            }[memory.content_type] || '📌';
+            
+            const metadata = memory.metadata || {};
+            const tags = metadata.tags || [];
+            const date = new Date(memory.created_at).toLocaleDateString('he-IL', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+            
+            let metadataHtml = '';
+            if (metadata.category) metadataHtml += `<p><strong>קטגוריה:</strong> ${metadata.category}</p>`;
+            if (metadata.amount) metadataHtml += `<p><strong>סכום:</strong> ${metadata.amount} ${metadata.currency || ''}</p>`;
+            if (metadata.location) metadataHtml += `<p><strong>מיקום:</strong> ${metadata.location}</p>`;
+            if (metadata.sentiment) metadataHtml += `<p><strong>סנטימנט:</strong> ${metadata.sentiment}</p>`;
+            
+            modalBody.innerHTML = `
+                <h2 class="text-2xl font-bold mb-4">${typeEmoji} ${memory.content_type}</h2>
+                <p class="text-sm mb-4" style="color: var(--tg-theme-hint-color);">📅 ${date}</p>
+                
+                <div class="mb-4">
+                    <h3 class="font-bold mb-2">תיאור:</h3>
+                    <p class="leading-relaxed">${memory.display_text}</p>
+                </div>
+                
+                ${tags.length ? `
+                <div class="mb-4">
+                    <h3 class="font-bold mb-2">תגיות:</h3>
+                    ${tags.map(tag => `<span class="tag">${tag}</span>`).join('')}
+                </div>
+                ` : ''}
+                
+                ${metadataHtml ? `
+                <div class="mb-4">
+                    <h3 class="font-bold mb-2">מידע נוסף:</h3>
+                    ${metadataHtml}
+                </div>
+                ` : ''}
+                
+                <div class="mb-4">
+                    <h3 class="font-bold mb-2">תוכן מקורי:</h3>
+                    <p class="leading-relaxed p-3 rounded" style="background: var(--tg-theme-secondary-bg-color);">
+                        ${memory.original_content}
+                    </p>
+                </div>
+            `;
+            
+            modal.style.display = 'block';
+        }
+        
+        // Close modal
+        function closeModal() {
+            modal.style.display = 'none';
+        }
+        
+        // Close modal on outside click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closeModal();
+        });
+        
+        // Show/hide loading
+        function showLoading() {
+            loadingSpinner.style.display = 'block';
+            resultsContainer.innerHTML = '';
+            emptyState.style.display = 'none';
+        }
+        
+        function hideLoading() {
+            loadingSpinner.style.display = 'none';
+        }
+        
+        // Load initial data
+        if (userId) {
+            performSearch();
+        }
+        
+        // Haptic feedback on interactions
+        searchBtn.addEventListener('click', () => tg.HapticFeedback.impactOccurred('medium'));
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => tg.HapticFeedback.impactOccurred('light'));
+        });
+    </script>
+</body>
+</html>

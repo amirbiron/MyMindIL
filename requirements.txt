@@ -1,0 +1,26 @@
+# Core Framework
+flask==3.0.0
+gunicorn==21.2.0
+python-dotenv==1.0.0
+
+# Telegram Bot
+python-telegram-bot==21.0.1
+
+# Database
+sqlalchemy==2.0.25
+psycopg[binary]==3.1.18
+pgvector==0.2.5
+alembic==1.13.1
+
+# Google AI
+google-generativeai==0.3.2
+
+# Utilities
+requests==2.31.0
+python-dateutil==2.8.2
+beautifulsoup4==4.12.3
+pillow==10.2.0
+
+# Production
+sentry-sdk[flask]==1.40.0
+redis==5.0.1

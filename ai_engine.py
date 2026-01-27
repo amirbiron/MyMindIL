@@ -15,21 +15,29 @@ logger = logging.getLogger(__name__)
 genai.configure(api_key=Config.GOOGLE_API_KEY)
 
 # Initialize models
-analysis_model = genai.GenerativeModel(
-    model_name=Config.GEMINI_MODEL,
-    generation_config={
-        'temperature': 0.3,
-        'top_p': 0.95,
-        'top_k': 40,
-        'max_output_tokens': 2048,
-    },
-    safety_settings={
-        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-    }
-)
+def _build_model(model_name: str) -> genai.GenerativeModel:
+    return genai.GenerativeModel(
+        model_name=model_name,
+        generation_config={
+            'temperature': 0.3,
+            'top_p': 0.95,
+            'top_k': 40,
+            'max_output_tokens': 2048,
+        },
+        safety_settings={
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+        }
+    )
+
+
+TEXT_MODEL_NAME = getattr(Config, 'GEMINI_TEXT_MODEL', None) or Config.GEMINI_MODEL
+VISION_MODEL_NAME = getattr(Config, 'GEMINI_VISION_MODEL', None) or Config.GEMINI_MODEL
+
+analysis_text_model = _build_model(TEXT_MODEL_NAME)
+analysis_vision_model = _build_model(VISION_MODEL_NAME)
 
 # System instruction for content analysis
 ANALYSIS_INSTRUCTION = """אתה ארכיונאי אישי חכם. תפקידך לנתח תוכן ולספק מידע מובנה.
@@ -95,7 +103,7 @@ class AIEngine:
                 import io
                 from PIL import Image
                 image = Image.open(io.BytesIO(image_data))
-                response = analysis_model.generate_content([prompt, image])
+                response = analysis_vision_model.generate_content([prompt, image])
                 
             else:
                 prompt = f"""{ANALYSIS_INSTRUCTION}
@@ -108,7 +116,7 @@ class AIEngine:
 
 החזר JSON לפי המבנה המבוקש."""
                 
-                response = analysis_model.generate_content(prompt)
+                response = analysis_text_model.generate_content(prompt)
             
             # Extract JSON from response
             result_text = response.text.strip()

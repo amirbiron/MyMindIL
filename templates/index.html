@@ -36,6 +36,12 @@
             padding: 0;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
         }
+
+        button:disabled,
+        input:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
         
         /* Sticky search bar */
         .search-container {
@@ -230,6 +236,21 @@
         <h3 class="text-xl font-bold mb-2">לא נמצאו תוצאות</h3>
         <p>נסה לחפש משהו אחר או שלח תוכן חדש לבוט</p>
     </div>
+
+    <!-- Auth Prompt -->
+    <div id="authPrompt" class="empty-state" style="display: none;">
+        <div class="empty-state-icon">🔐</div>
+        <h3 class="text-xl font-bold mb-2">נדרש אימות</h3>
+        <p id="authMessage" class="mb-4">כדי להציג את הזיכרונות, התחבר באמצעות טלגרם או פתח דרך הבוט.</p>
+        <div id="loginWidgetContainer" class="flex justify-center"></div>
+        <a
+            id="openTelegramLink"
+            class="mt-4 inline-block px-4 py-2 rounded-lg font-semibold"
+            style="background: var(--tg-theme-button-color); color: var(--tg-theme-button-text-color);"
+            href="#"
+            rel="noopener"
+        >פתח בטלגרם</a>
+    </div>
     
     <!-- Modal for full view -->
     <div id="memoryModal" class="modal">
@@ -240,14 +261,20 @@
     </div>
     
     <script>
-        // Initialize Telegram Web App
-        const tg = window.Telegram.WebApp;
-        tg.ready();
-        tg.expand();
-        
+        // Initialize Telegram Web App (if available)
+        const tg = window.Telegram?.WebApp || null;
+        if (tg && typeof tg.ready === 'function') {
+            tg.ready();
+        }
+        if (tg && typeof tg.expand === 'function') {
+            tg.expand();
+        }
+
+        const botUsername = "{{ bot_username|e }}";
+
         // Apply Telegram theme
         const applyTheme = () => {
-            const params = tg.themeParams;
+            const params = tg?.themeParams || {};
             if (params.bg_color) {
                 document.documentElement.style.setProperty('--tg-theme-bg-color', params.bg_color);
             }
@@ -273,12 +300,29 @@
         
         applyTheme();
         
-        // Get user ID from Telegram
-        const userId = tg.initDataUnsafe?.user?.id;
-        
+        // Resolve user ID (Telegram WebApp / query param / localStorage)
+        const parseUserId = (value) => {
+            const parsed = Number(value);
+            if (!Number.isInteger(parsed) || parsed <= 0) {
+                return null;
+            }
+            return parsed;
+        };
+
+        let userId = parseUserId(tg?.initDataUnsafe?.user?.id);
+
         if (!userId) {
-            document.getElementById('resultsContainer').innerHTML = 
-                '<div class="empty-state"><div class="empty-state-icon">⚠️</div><h3>שגיאה</h3><p>לא ניתן לזהות את המשתמש</p></div>';
+            const urlUserId = new URLSearchParams(window.location.search).get('user_id');
+            userId = parseUserId(urlUserId);
+        }
+
+        if (!userId) {
+            const storedUserId = localStorage.getItem('mymindil_user_id');
+            userId = parseUserId(storedUserId);
+        }
+
+        if (userId) {
+            localStorage.setItem('mymindil_user_id', String(userId));
         }
         
         // State
@@ -293,6 +337,10 @@
         const emptyState = document.getElementById('emptyState');
         const modal = document.getElementById('memoryModal');
         const modalBody = document.getElementById('modalBody');
+        const authPrompt = document.getElementById('authPrompt');
+        const authMessage = document.getElementById('authMessage');
+        const loginWidgetContainer = document.getElementById('loginWidgetContainer');
+        const openTelegramLink = document.getElementById('openTelegramLink');
         
         // Event listeners
         searchBtn.addEventListener('click', performSearch);
@@ -317,9 +365,85 @@
         // Style active filter
         document.querySelector('.filter-btn.active').style.background = 'var(--tg-theme-button-color)';
         document.querySelector('.filter-btn.active').style.color = 'var(--tg-theme-button-text-color)';
+
+        // Authentication helpers
+        const setAuthState = (isAuthenticated) => {
+            searchInput.disabled = !isAuthenticated;
+            searchBtn.disabled = !isAuthenticated;
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                btn.disabled = !isAuthenticated;
+            });
+        };
+
+        const loadLoginWidget = () => {
+            if (!botUsername) {
+                authMessage.textContent = 'האימות זמין דרך הבוט בלבד. פתח את האפליקציה מתוך טלגרם.';
+                openTelegramLink.style.display = 'none';
+                return;
+            }
+
+            openTelegramLink.href = `https://t.me/${botUsername}`;
+            openTelegramLink.style.display = 'inline-block';
+
+            if (loginWidgetContainer.dataset.loaded === 'true') {
+                return;
+            }
+
+            loginWidgetContainer.dataset.loaded = 'true';
+            loginWidgetContainer.innerHTML = '';
+
+            const widgetScript = document.createElement('script');
+            widgetScript.async = true;
+            widgetScript.src = 'https://telegram.org/js/telegram-widget.js?22';
+            widgetScript.setAttribute('data-telegram-login', botUsername);
+            widgetScript.setAttribute('data-size', 'large');
+            widgetScript.setAttribute('data-radius', '8');
+            widgetScript.setAttribute('data-onauth', 'onTelegramAuth(user)');
+            widgetScript.setAttribute('data-request-access', 'write');
+            widgetScript.setAttribute('data-userpic', 'false');
+            loginWidgetContainer.appendChild(widgetScript);
+        };
+
+        const showAuthPrompt = () => {
+            setAuthState(false);
+            authPrompt.style.display = 'block';
+            emptyState.style.display = 'none';
+            resultsContainer.innerHTML = '';
+            loadingSpinner.style.display = 'none';
+            loadLoginWidget();
+        };
+
+        const hideAuthPrompt = () => {
+            authPrompt.style.display = 'none';
+            setAuthState(true);
+        };
+
+        window.onTelegramAuth = (user) => {
+            const resolvedId = parseUserId(user?.id);
+            if (!resolvedId) {
+                return;
+            }
+            userId = resolvedId;
+            localStorage.setItem('mymindil_user_id', String(userId));
+            hideAuthPrompt();
+            performSearch();
+        };
         
+        const showAlertMessage = (message) => {
+            if (tg && typeof tg.showAlert === 'function') {
+                tg.showAlert(message);
+            } else {
+                alert(message);
+            }
+        };
+
         // Search function
         async function performSearch() {
+            if (!userId) {
+                showAuthPrompt();
+                return;
+            }
+
             const query = searchInput.value.trim();
             currentQuery = query;
             
@@ -354,7 +478,7 @@
                 
             } catch (error) {
                 console.error('Search error:', error);
-                tg.showAlert('שגיאה בחיפוש: ' + error.message);
+                showAlertMessage('שגיאה בחיפוש: ' + error.message);
                 hideLoading();
             }
         }
@@ -398,15 +522,24 @@
             const tagsHtml = tags.slice(0, 3).map(tag => `<span class="tag">${tag}</span>`).join('');
             
             const date = new Date(memory.created_at).toLocaleDateString('he-IL');
+            const isImage = memory.content_type === 'image';
+            const imageUrl = isImage
+                ? `/api/media/telegram?file_id=${encodeURIComponent(memory.original_content)}`
+                : '';
+            const imageHtml = isImage
+                ? `<img src="${imageUrl}" alt="${memory.display_text || 'תמונה'}" loading="lazy" onerror="this.style.display='none'">`
+                : '';
+            const displayText = memory.display_text || (isImage ? 'תמונה' : '');
             
             return `
                 <div class="masonry-item" data-id="${memory.id}">
+                    ${imageHtml}
                     <div class="memory-content">
                         <div class="flex items-center justify-between mb-2">
                             <span class="content-badge ${badgeClass}">${typeEmoji} ${memory.content_type}</span>
                             <span class="text-xs" style="color: var(--tg-theme-hint-color);">${date}</span>
                         </div>
-                        <p class="text-sm leading-relaxed">${memory.display_text}</p>
+                        <p class="text-sm leading-relaxed">${displayText}</p>
                         ${tagsHtml ? `<div class="mt-2">${tagsHtml}</div>` : ''}
                     </div>
                 </div>
@@ -429,20 +562,40 @@
                 month: 'long',
                 day: 'numeric'
             });
+            const isImage = memory.content_type === 'image';
+            const imageUrl = isImage
+                ? `/api/media/telegram?file_id=${encodeURIComponent(memory.original_content)}`
+                : '';
+            const imageHtml = isImage
+                ? `<div class="mb-4"><img src="${imageUrl}" alt="${memory.display_text || 'תמונה'}" class="w-full rounded-lg" onerror="this.style.display='none'"></div>`
+                : '';
+            const displayText = memory.display_text || (isImage ? 'תמונה' : '');
             
             let metadataHtml = '';
             if (metadata.category) metadataHtml += `<p><strong>קטגוריה:</strong> ${metadata.category}</p>`;
             if (metadata.amount) metadataHtml += `<p><strong>סכום:</strong> ${metadata.amount} ${metadata.currency || ''}</p>`;
             if (metadata.location) metadataHtml += `<p><strong>מיקום:</strong> ${metadata.location}</p>`;
             if (metadata.sentiment) metadataHtml += `<p><strong>סנטימנט:</strong> ${metadata.sentiment}</p>`;
+            const originalContentHtml = isImage
+                ? ''
+                : `
+                <div class="mb-4">
+                    <h3 class="font-bold mb-2">תוכן מקורי:</h3>
+                    <p class="leading-relaxed p-3 rounded" style="background: var(--tg-theme-secondary-bg-color);">
+                        ${memory.original_content}
+                    </p>
+                </div>
+                `;
             
             modalBody.innerHTML = `
                 <h2 class="text-2xl font-bold mb-4">${typeEmoji} ${memory.content_type}</h2>
                 <p class="text-sm mb-4" style="color: var(--tg-theme-hint-color);">📅 ${date}</p>
                 
+                ${imageHtml}
+
                 <div class="mb-4">
                     <h3 class="font-bold mb-2">תיאור:</h3>
-                    <p class="leading-relaxed">${memory.display_text}</p>
+                    <p class="leading-relaxed">${displayText}</p>
                 </div>
                 
                 ${tags.length ? `
@@ -459,12 +612,7 @@
                 </div>
                 ` : ''}
                 
-                <div class="mb-4">
-                    <h3 class="font-bold mb-2">תוכן מקורי:</h3>
-                    <p class="leading-relaxed p-3 rounded" style="background: var(--tg-theme-secondary-bg-color);">
-                        ${memory.original_content}
-                    </p>
-                </div>
+                ${originalContentHtml}
             `;
             
             modal.style.display = 'block';
@@ -493,13 +641,24 @@
         
         // Load initial data
         if (userId) {
+            hideAuthPrompt();
             performSearch();
+        } else {
+            showAuthPrompt();
         }
         
         // Haptic feedback on interactions
-        searchBtn.addEventListener('click', () => tg.HapticFeedback.impactOccurred('medium'));
+        searchBtn.addEventListener('click', () => {
+            if (tg?.HapticFeedback?.impactOccurred) {
+                tg.HapticFeedback.impactOccurred('medium');
+            }
+        });
         document.querySelectorAll('.filter-btn').forEach(btn => {
-            btn.addEventListener('click', () => tg.HapticFeedback.impactOccurred('light'));
+            btn.addEventListener('click', () => {
+                if (tg?.HapticFeedback?.impactOccurred) {
+                    tg.HapticFeedback.impactOccurred('light');
+                }
+            });
         });
     </script>
 </body>

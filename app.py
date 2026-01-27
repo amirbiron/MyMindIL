@@ -2,12 +2,14 @@
 Main Flask Application for MyMindIL
 Serves the Telegram Web App and API endpoints
 """
-from flask import Flask, request, jsonify, render_template, send_from_directory
+from flask import Flask, request, jsonify, render_template, send_from_directory, Response
 from telegram import Update
 import logging
 import os
 import threading
 import asyncio
+import mimetypes
+import requests
 from config import Config
 from database import init_db, check_db_connection, get_db_stats
 from bot import TelegramBot
@@ -154,7 +156,7 @@ def ensure_webhook():
 @app.route('/')
 def index():
     """Serve the main Telegram Web App interface"""
-    return render_template('index.html')
+    return render_template('index.html', bot_username=Config.TELEGRAM_BOT_USERNAME or "")
 
 
 @app.route('/static/<path:path>')
@@ -305,6 +307,43 @@ def api_recent():
             'success': False,
             'error': str(e)
         }), 500
+
+
+@app.route('/api/media/telegram', methods=['GET'])
+def api_telegram_media():
+    """Proxy Telegram files (images) for the web app."""
+    file_id = request.args.get('file_id')
+    if not file_id:
+        return jsonify({'success': False, 'error': 'file_id required'}), 400
+
+    try:
+        if bot_instance is None:
+            ensure_initialized()
+        ensure_bot_ready()
+
+        tg_file = run_bot_coroutine(bot_instance.app.bot.get_file(file_id))
+        file_path = getattr(tg_file, "file_path", None)
+        if not file_path:
+            return jsonify({'success': False, 'error': 'file not found'}), 404
+
+        if file_path.startswith('http'):
+            file_url = file_path
+        else:
+            file_url = f"https://api.telegram.org/file/bot{Config.TELEGRAM_TOKEN}/{file_path}"
+
+        response = requests.get(file_url, timeout=15)
+        if response.status_code != 200:
+            logger.error(f"Failed to download Telegram file: {response.status_code}")
+            return jsonify({'success': False, 'error': 'failed to download file'}), 502
+
+        content_type = response.headers.get('Content-Type')
+        if not content_type:
+            content_type, _ = mimetypes.guess_type(file_path)
+
+        return Response(response.content, content_type=content_type or 'application/octet-stream')
+    except Exception as e:
+        logger.error(f"Telegram file proxy error: {e}")
+        return jsonify({'success': False, 'error': 'failed to fetch media'}), 500
 
 
 # ============================================================================

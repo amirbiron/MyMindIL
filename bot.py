@@ -49,6 +49,16 @@ class TelegramBot:
         self.app.add_handler(MessageHandler(filters.Entity("url"), self.handle_link))
         
         logger.info("Bot handlers registered")
+
+    async def ensure_ready(self):
+        """Initialize and start the application for webhook mode."""
+        try:
+            if not getattr(self.app, "initialized", False):
+                await self.app.initialize()
+            if not getattr(self.app, "running", False):
+                await self.app.start()
+        except Exception as e:
+            logger.error(f"Failed to start bot application: {e}")
     
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command"""
@@ -414,6 +424,7 @@ class TelegramBot:
     async def setup_webhook(self):
         """Setup webhook for production"""
         if self.webhook_url:
+            await self.ensure_ready()
             await self.app.bot.set_webhook(
                 url=f"{self.webhook_url}",
                 allowed_updates=Update.ALL_TYPES

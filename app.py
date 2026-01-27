@@ -40,8 +40,11 @@ def init_app():
     logger.info("Configuration validated")
     
     # Initialize database
-    init_db()
-    logger.info("Database initialized")
+    try:
+        init_db()
+        logger.info("Database initialized")
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
     
     # Initialize bot
     bot_instance = TelegramBot(

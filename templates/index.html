@@ -177,77 +177,101 @@
     </style>
 </head>
 <body>
-    <!-- Search Container -->
-    <div class="search-container">
-        <div class="p-4">
-            <div class="flex gap-2">
-                <input 
-                    type="text" 
-                    id="searchInput" 
-                    placeholder="חפש בזיכרונות..." 
-                    class="flex-1 px-4 py-3 rounded-lg border-2 focus:outline-none focus:border-blue-500"
-                    style="border-color: var(--tg-theme-hint-color); background: var(--tg-theme-secondary-bg-color);"
-                >
-                <button 
-                    id="searchBtn"
-                    class="px-6 py-3 rounded-lg font-semibold"
-                    style="background: var(--tg-theme-button-color); color: var(--tg-theme-button-text-color);"
-                >
-                    🔍
-                </button>
-            </div>
-            
-            <!-- Filter tabs -->
-            <div class="flex gap-2 mt-3 overflow-x-auto">
-                <button class="filter-btn active px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap" data-filter="all">
-                    הכל
-                </button>
-                <button class="filter-btn px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap" data-filter="text">
-                    📄 טקסט
-                </button>
-                <button class="filter-btn px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap" data-filter="image">
-                    🖼 תמונות
-                </button>
-                <button class="filter-btn px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap" data-filter="voice">
-                    🎤 הקלטות
-                </button>
-                <button class="filter-btn px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap" data-filter="link">
-                    🔗 קישורים
-                </button>
+    <!-- Auth Container -->
+    <div id="authContainer" class="empty-state" style="display: none;">
+        <div class="empty-state-icon">🔐</div>
+        <h3 class="text-xl font-bold mb-2">נדרש אימות</h3>
+        <p class="mb-4">כדי לזהות את המשתמש, צריך לפתוח את האפליקציה מתוך טלגרם או להתחבר כאן.</p>
+        <div id="telegramLogin" class="flex justify-center"></div>
+        <a
+            id="openTelegramLink"
+            class="mt-4 inline-block px-4 py-2 rounded-lg font-semibold"
+            style="background: var(--tg-theme-button-color); color: var(--tg-theme-button-text-color);"
+            href="#"
+            target="_blank"
+            rel="noopener"
+        >
+            פתח בטלגרם
+        </a>
+        <p id="loginHint" class="mt-4 text-sm"></p>
+    </div>
+
+    <div id="appContainer">
+        <!-- Search Container -->
+        <div class="search-container">
+            <div class="p-4">
+                <div class="flex gap-2">
+                    <input 
+                        type="text" 
+                        id="searchInput" 
+                        placeholder="חפש בזיכרונות..." 
+                        class="flex-1 px-4 py-3 rounded-lg border-2 focus:outline-none focus:border-blue-500"
+                        style="border-color: var(--tg-theme-hint-color); background: var(--tg-theme-secondary-bg-color);"
+                    >
+                    <button 
+                        id="searchBtn"
+                        class="px-6 py-3 rounded-lg font-semibold"
+                        style="background: var(--tg-theme-button-color); color: var(--tg-theme-button-text-color);"
+                    >
+                        🔍
+                    </button>
+                </div>
+                
+                <!-- Filter tabs -->
+                <div class="flex gap-2 mt-3 overflow-x-auto">
+                    <button class="filter-btn active px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap" data-filter="all">
+                        הכל
+                    </button>
+                    <button class="filter-btn px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap" data-filter="text">
+                        📄 טקסט
+                    </button>
+                    <button class="filter-btn px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap" data-filter="image">
+                        🖼 תמונות
+                    </button>
+                    <button class="filter-btn px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap" data-filter="voice">
+                        🎤 הקלטות
+                    </button>
+                    <button class="filter-btn px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap" data-filter="link">
+                        🔗 קישורים
+                    </button>
+                </div>
             </div>
         </div>
-    </div>
-    
-    <!-- Loading Spinner -->
-    <div id="loadingSpinner" class="spinner" style="display: none;"></div>
-    
-    <!-- Results Container -->
-    <div id="resultsContainer" class="masonry-grid"></div>
-    
-    <!-- Empty State -->
-    <div id="emptyState" class="empty-state" style="display: none;">
-        <div class="empty-state-icon">🔍</div>
-        <h3 class="text-xl font-bold mb-2">לא נמצאו תוצאות</h3>
-        <p>נסה לחפש משהו אחר או שלח תוכן חדש לבוט</p>
-    </div>
-    
-    <!-- Modal for full view -->
-    <div id="memoryModal" class="modal">
-        <div class="modal-content">
-            <span class="close-modal" onclick="closeModal()">&times;</span>
-            <div id="modalBody"></div>
+        
+        <!-- Loading Spinner -->
+        <div id="loadingSpinner" class="spinner" style="display: none;"></div>
+        
+        <!-- Results Container -->
+        <div id="resultsContainer" class="masonry-grid"></div>
+        
+        <!-- Empty State -->
+        <div id="emptyState" class="empty-state" style="display: none;">
+            <div class="empty-state-icon">🔍</div>
+            <h3 class="text-xl font-bold mb-2">לא נמצאו תוצאות</h3>
+            <p>נסה לחפש משהו אחר או שלח תוכן חדש לבוט</p>
+        </div>
+        
+        <!-- Modal for full view -->
+        <div id="memoryModal" class="modal">
+            <div class="modal-content">
+                <span class="close-modal" onclick="closeModal()">&times;</span>
+                <div id="modalBody"></div>
+            </div>
         </div>
     </div>
     
     <script>
         // Initialize Telegram Web App
-        const tg = window.Telegram.WebApp;
-        tg.ready();
-        tg.expand();
+        const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+        if (tg) {
+            tg.ready();
+            tg.expand();
+        }
+        const botUsername = {{ bot_username|default('')|tojson }};
         
         // Apply Telegram theme
         const applyTheme = () => {
-            const params = tg.themeParams;
+            const params = tg?.themeParams || {};
             if (params.bg_color) {
                 document.documentElement.style.setProperty('--tg-theme-bg-color', params.bg_color);
             }
@@ -272,20 +296,18 @@
         };
         
         applyTheme();
-        
-        // Get user ID from Telegram
-        const userId = tg.initDataUnsafe?.user?.id;
-        
-        if (!userId) {
-            document.getElementById('resultsContainer').innerHTML = 
-                '<div class="empty-state"><div class="empty-state-icon">⚠️</div><h3>שגיאה</h3><p>לא ניתן לזהות את המשתמש</p></div>';
-        }
-        
+
         // State
         let currentFilter = 'all';
         let currentQuery = '';
+        let userId = null;
         
         // Elements
+        const authContainer = document.getElementById('authContainer');
+        const appContainer = document.getElementById('appContainer');
+        const loginHint = document.getElementById('loginHint');
+        const openTelegramLink = document.getElementById('openTelegramLink');
+        const telegramLogin = document.getElementById('telegramLogin');
         const searchInput = document.getElementById('searchInput');
         const searchBtn = document.getElementById('searchBtn');
         const resultsContainer = document.getElementById('resultsContainer');
@@ -299,6 +321,73 @@
         searchInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') performSearch();
         });
+
+        const showAlert = (message) => {
+            if (tg?.showAlert) {
+                tg.showAlert(message);
+            } else {
+                window.alert(message);
+            }
+        };
+
+        function showApp() {
+            authContainer.style.display = 'none';
+            appContainer.style.display = 'block';
+        }
+
+        function showAuth() {
+            authContainer.style.display = 'block';
+            appContainer.style.display = 'none';
+        }
+
+        function setUserId(id) {
+            userId = id;
+            showApp();
+            performSearch();
+        }
+
+        function initTelegramLogin() {
+            if (!botUsername) {
+                telegramLogin.style.display = 'none';
+                openTelegramLink.style.display = 'none';
+                loginHint.textContent = 'לא הוגדר שם משתמש לבוט. פתח את האפליקציה מתוך טלגרם.';
+                return;
+            }
+
+            openTelegramLink.href = `https://t.me/${botUsername}`;
+            loginHint.textContent = 'אפשר להתחבר כאן או לפתוח את הבוט בטלגרם.';
+            telegramLogin.innerHTML = '';
+
+            const script = document.createElement('script');
+            script.src = 'https://telegram.org/js/telegram-widget.js?22';
+            script.async = true;
+            script.setAttribute('data-telegram-login', botUsername);
+            script.setAttribute('data-size', 'large');
+            script.setAttribute('data-radius', '8');
+            script.setAttribute('data-request-access', 'write');
+            script.setAttribute('data-onauth', 'onTelegramAuth(user)');
+            telegramLogin.appendChild(script);
+        }
+
+        window.onTelegramAuth = async (user) => {
+            try {
+                const response = await fetch('/api/telegram-login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(user)
+                });
+
+                const data = await response.json();
+                if (!data.success || !data.user_id) {
+                    throw new Error('אימות נכשל');
+                }
+
+                setUserId(data.user_id);
+            } catch (error) {
+                console.error('Login error:', error);
+                showAlert('שגיאה באימות: ' + error.message);
+            }
+        };
         
         // Filter buttons
         document.querySelectorAll('.filter-btn').forEach(btn => {
@@ -326,6 +415,10 @@
             showLoading();
             
             try {
+                if (!userId) {
+                    showAuth();
+                    throw new Error('לא ניתן לזהות את המשתמש');
+                }
                 const filters = currentFilter !== 'all' ? { content_type: currentFilter } : null;
                 
                 const endpoint = query ? '/api/search' : '/api/recent';
@@ -354,7 +447,7 @@
                 
             } catch (error) {
                 console.error('Search error:', error);
-                tg.showAlert('שגיאה בחיפוש: ' + error.message);
+                showAlert('שגיאה בחיפוש: ' + error.message);
                 hideLoading();
             }
         }
@@ -491,16 +584,22 @@
             loadingSpinner.style.display = 'none';
         }
         
-        // Load initial data
-        if (userId) {
-            performSearch();
+        // Load initial data / auth
+        const telegramUserId = tg?.initDataUnsafe?.user?.id;
+        if (telegramUserId) {
+            setUserId(telegramUserId);
+        } else {
+            showAuth();
+            initTelegramLogin();
         }
         
         // Haptic feedback on interactions
-        searchBtn.addEventListener('click', () => tg.HapticFeedback.impactOccurred('medium'));
-        document.querySelectorAll('.filter-btn').forEach(btn => {
-            btn.addEventListener('click', () => tg.HapticFeedback.impactOccurred('light'));
-        });
+        if (tg?.HapticFeedback?.impactOccurred) {
+            searchBtn.addEventListener('click', () => tg.HapticFeedback.impactOccurred('medium'));
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                btn.addEventListener('click', () => tg.HapticFeedback.impactOccurred('light'));
+            });
+        }
     </script>
 </body>
 </html>

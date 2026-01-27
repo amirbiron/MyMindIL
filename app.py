@@ -8,6 +8,9 @@ import logging
 import os
 import threading
 import asyncio
+import hashlib
+import hmac
+import time
 from config import Config
 from database import init_db, check_db_connection, get_db_stats
 from bot import TelegramBot
@@ -154,7 +157,10 @@ def ensure_webhook():
 @app.route('/')
 def index():
     """Serve the main Telegram Web App interface"""
-    return render_template('index.html')
+    return render_template(
+        'index.html',
+        bot_username=Config.TELEGRAM_BOT_USERNAME or ''
+    )
 
 
 @app.route('/static/<path:path>')
@@ -166,6 +172,63 @@ def serve_static(path):
 # ============================================================================
 # API Routes
 # ============================================================================
+
+def _verify_telegram_login(payload: dict) -> Optional[int]:
+    """Verify Telegram login widget payload and return user_id if valid."""
+    if not payload or not Config.TELEGRAM_TOKEN:
+        return None
+
+    try:
+        auth_date = int(payload.get('auth_date', 0))
+    except (TypeError, ValueError):
+        return None
+
+    if auth_date <= 0:
+        return None
+
+    max_age_seconds = 60 * 60 * 24  # 24 hours
+    now = int(time.time())
+    if auth_date > now or now - auth_date > max_age_seconds:
+        return None
+
+    received_hash = payload.get('hash')
+    if not received_hash:
+        return None
+
+    data_check_list = []
+    for key in sorted(k for k in payload.keys() if k != 'hash'):
+        value = payload.get(key)
+        if value is None:
+            continue
+        data_check_list.append(f"{key}={value}")
+
+    data_check_string = "\n".join(data_check_list)
+    secret_key = hashlib.sha256(Config.TELEGRAM_TOKEN.encode()).digest()
+    calculated_hash = hmac.new(
+        secret_key,
+        data_check_string.encode(),
+        hashlib.sha256
+    ).hexdigest()
+
+    if not hmac.compare_digest(calculated_hash, received_hash):
+        return None
+
+    try:
+        return int(payload.get('id'))
+    except (TypeError, ValueError):
+        return None
+
+
+@app.route('/api/telegram-login', methods=['POST'])
+def api_telegram_login():
+    """Validate Telegram login widget data."""
+    data = request.get_json() or {}
+    user_id = _verify_telegram_login(data)
+
+    if not user_id:
+        return jsonify({'success': False, 'error': 'invalid_auth'}), 401
+
+    return jsonify({'success': True, 'user_id': user_id})
 
 @app.route('/api/search', methods=['POST'])
 def api_search():

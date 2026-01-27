@@ -42,10 +42,10 @@ class SearchEngine:
             
             with get_db_session() as session:
                 # Build base query
+                similarity = (1 - Memory.embedding.cosine_distance(query_embedding)).label('similarity')
                 base_query = session.query(
                     Memory,
-                    # Calculate cosine similarity (1 - cosine distance)
-                    (1 - Memory.embedding.cosine_distance(query_embedding)).label('similarity')
+                    similarity
                 ).filter(
                     Memory.user_id == user_id
                 )
@@ -61,7 +61,7 @@ class SearchEngine:
                 
                 # Order by similarity and apply pagination
                 results = base_query.order_by(
-                    func.desc('similarity')
+                    similarity.desc()
                 ).limit(limit).offset(offset).all()
                 
                 # Convert to dictionaries and add similarity score

@@ -83,8 +83,10 @@ class AIEngine:
         try:
             # Prepare prompt based on content type
             if content_type == 'image' and image_data:
-                prompt = f"""נתח את התמונה הזו וספק מידע מובנה.
-                
+                prompt = f"""{ANALYSIS_INSTRUCTION}
+
+נתח את התמונה הזו וספק מידע מובנה.
+
 טקסט נלווה (אם יש): {content}
 
 החזר JSON לפי המבנה המבוקש."""
@@ -96,7 +98,9 @@ class AIEngine:
                 response = analysis_model.generate_content([prompt, image])
                 
             else:
-                prompt = f"""נתח את התוכן הבא:
+                prompt = f"""{ANALYSIS_INSTRUCTION}
+
+נתח את התוכן הבא:
 
 סוג: {content_type}
 תוכן:
@@ -224,18 +228,3 @@ class AIEngine:
             raise
 
 
-# Initialize model with system instruction
-try:
-    analysis_model = genai.GenerativeModel(
-        model_name=Config.GEMINI_MODEL,
-        generation_config={
-            'temperature': 0.3,
-            'top_p': 0.95,
-            'top_k': 40,
-            'max_output_tokens': 2048,
-        },
-        system_instruction=ANALYSIS_INSTRUCTION
-    )
-    logger.info("AI Engine initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize AI Engine: {e}")

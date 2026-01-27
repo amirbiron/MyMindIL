@@ -301,7 +301,7 @@ class AIEngine:
         IMPORTANT: 
         - No fallback to other models (to avoid dimension mismatch)
         - No task_type (not supported by text-embedding-004)
-        - Enforces output_dimensionality for consistency
+        - Validates output dimension for consistency
         - Raises exception on failure (don't save garbage to DB)
         
         Args:
@@ -318,10 +318,11 @@ class AIEngine:
             raise ValueError("generate_embedding: empty text")
         
         try:
+            # NOTE: output_dimensionality parameter requires google-generativeai >= 0.4.0
+            # Current version (0.3.2) doesn't support it, so we just validate the output
             result = genai.embed_content(
                 model=AIEngine.EMBED_MODEL,
                 content=text,
-                output_dimensionality=AIEngine.EMBED_DIM,  # Enforce consistent dimensions
             )
             
             # Handle different response formats from the API
@@ -329,14 +330,20 @@ class AIEngine:
             if isinstance(embedding, dict) and 'values' in embedding:
                 embedding = embedding['values']
             
-            if not embedding or len(embedding) != AIEngine.EMBED_DIM:
+            if not embedding:
+                raise ValueError("Embedding is empty")
+            
+            # Validate dimension - text-embedding-004 returns 768 by default
+            if len(embedding) != AIEngine.EMBED_DIM:
                 raise ValueError(
                     f"Bad embedding length: expected {AIEngine.EMBED_DIM}, "
-                    f"got {0 if not embedding else len(embedding)}"
+                    f"got {len(embedding)}"
                 )
             
             return embedding
             
+        except ValueError:
+            raise
         except Exception as e:
             logger.error(f"Embedding generation failed: {e}")
             raise ValueError(f"Failed to generate embedding: {e}")

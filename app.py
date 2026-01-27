@@ -4,10 +4,10 @@ Serves the Telegram Web App and API endpoints
 """
 from flask import Flask, request, jsonify, render_template, send_from_directory
 from telegram import Update
-import asyncio
 import logging
 import os
 import threading
+import asyncio
 from config import Config
 from database import init_db, check_db_connection, get_db_stats
 from bot import TelegramBot
@@ -29,6 +29,34 @@ app.config.from_object(Config)
 bot_instance: Optional[TelegramBot] = None
 _init_lock = threading.Lock()
 _app_initialized = False
+_loop_thread = None
+_loop_lock = threading.Lock()
+_bot_ready_lock = threading.Lock()
+
+
+class AsyncLoopThread:
+    """Run an asyncio event loop in a dedicated thread."""
+
+    def __init__(self, name: str = "telegram-bot-loop"):
+        self._thread = threading.Thread(target=self._run, name=name, daemon=True)
+        self._loop_ready = threading.Event()
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def _run(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self.loop = loop
+        self._loop_ready.set()
+        loop.run_forever()
+        loop.close()
+
+    def start(self):
+        if not self._thread.is_alive():
+            self._thread.start()
+            self._loop_ready.wait()
+
+    def is_alive(self) -> bool:
+        return self._thread.is_alive()
 
 
 def init_app():
@@ -68,11 +96,53 @@ def ensure_initialized():
         _app_initialized = True
 
 
+def _is_bot_ready() -> bool:
+    return (
+        bot_instance is not None
+        and getattr(bot_instance.app, "initialized", False)
+        and getattr(bot_instance.app, "running", False)
+    )
+
+
+def ensure_bot_loop() -> asyncio.AbstractEventLoop:
+    """Ensure a dedicated asyncio loop is running for the bot."""
+    global _loop_thread
+    if _loop_thread is None or not _loop_thread.is_alive():
+        with _loop_lock:
+            if _loop_thread is None or not _loop_thread.is_alive():
+                _loop_thread = AsyncLoopThread()
+                _loop_thread.start()
+    if _loop_thread.loop is None:
+        raise RuntimeError("Bot event loop failed to start")
+    return _loop_thread.loop
+
+
+def run_bot_coroutine(coro):
+    """Run a coroutine on the bot loop and wait for result."""
+    loop = ensure_bot_loop()
+    future = asyncio.run_coroutine_threadsafe(coro, loop)
+    return future.result()
+
+
+def ensure_bot_ready():
+    """Ensure the bot application is initialized on the bot loop."""
+    if bot_instance is None:
+        ensure_initialized()
+    if _is_bot_ready():
+        return
+    with _bot_ready_lock:
+        if _is_bot_ready():
+            return
+        run_bot_coroutine(bot_instance.ensure_ready())
+
+
 def ensure_webhook():
     """Ensure webhook is set in production environments."""
     if Config.TELEGRAM_WEBHOOK_URL:
         try:
-            setup_webhook_async()
+            if bot_instance is None:
+                ensure_initialized()
+            asyncio.run(bot_instance.setup_webhook())
         except Exception as e:
             logger.error(f"Failed to set webhook: {e}")
 
@@ -242,7 +312,7 @@ def api_recent():
 # ============================================================================
 
 @app.route('/webhook', methods=['POST'])
-async def webhook():
+def webhook():
     """
     Telegram webhook endpoint
     Receives updates from Telegram and processes them
@@ -250,9 +320,9 @@ async def webhook():
     try:
         if bot_instance is None:
             ensure_initialized()
-        await bot_instance.ensure_ready()
+        ensure_bot_ready()
         update = Update.de_json(request.get_json(), bot_instance.app.bot)
-        await bot_instance.app.process_update(update)
+        run_bot_coroutine(bot_instance.app.process_update(update))
         return jsonify({'ok': True})
         
     except Exception as e:
@@ -314,14 +384,6 @@ def internal_error(error):
 # ============================================================================
 # Application Entry Point
 # ============================================================================
-
-def setup_webhook_async():
-    """Setup webhook asynchronously"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(bot_instance.setup_webhook())
-    loop.close()
-
 
 def bootstrap_app():
     """Initialize components for WSGI servers like gunicorn."""

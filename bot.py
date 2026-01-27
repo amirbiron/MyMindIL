@@ -2,7 +2,7 @@
 Telegram Bot Handlers
 Handles all incoming messages and forwards them to processing
 """
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, Bot
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -423,13 +423,18 @@ class TelegramBot:
     
     async def setup_webhook(self):
         """Setup webhook for production"""
-        if self.webhook_url:
-            await self.ensure_ready()
-            await self.app.bot.set_webhook(
-                url=f"{self.webhook_url}",
+        if not self.webhook_url:
+            return
+
+        bot = Bot(token=self.token)
+        try:
+            await bot.set_webhook(
+                url=self.webhook_url,
                 allowed_updates=Update.ALL_TYPES
             )
             logger.info(f"Webhook set to {self.webhook_url}")
+        finally:
+            await bot.close()
     
     def run_polling(self):
         """Run bot in polling mode (development)"""

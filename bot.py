@@ -229,13 +229,19 @@ class TelegramBot:
             
             # Save to database
             with get_db_session() as session:
+                # Enrich metadata with code detection
+                enriched_meta = AIEngine.enrich_meta(
+                    analysis['metadata'], 
+                    analysis['search_text']
+                )
+                
                 memory = Memory(
                     user_id=user_id,
                     content_type='text',
                     original_content=text,
                     display_text=analysis['display_text'],
                     search_text=analysis['search_text'],
-                    meta=analysis['metadata'],
+                    meta=enriched_meta,
                     embedding=embedding
                 )
                 session.add(memory)
@@ -283,13 +289,19 @@ class TelegramBot:
             
             # Save to database
             with get_db_session() as session:
+                # Enrich metadata with code detection
+                enriched_meta = AIEngine.enrich_meta(
+                    analysis['metadata'], 
+                    analysis['search_text']
+                )
+                
                 memory = Memory(
                     user_id=user_id,
                     content_type='image',
                     original_content=photo.file_id,  # Store Telegram file_id
                     display_text=analysis['display_text'],
                     search_text=analysis['search_text'],
-                    meta=analysis['metadata'],
+                    meta=enriched_meta,
                     embedding=embedding
                 )
                 session.add(memory)
@@ -338,13 +350,19 @@ class TelegramBot:
             embedding = AIEngine.generate_embedding(rich_content_for_embedding)
             
             with get_db_session() as session:
+                # Enrich metadata with code detection
+                enriched_meta = AIEngine.enrich_meta(
+                    analysis['metadata'], 
+                    analysis['search_text']
+                )
+                
                 memory = Memory(
                     user_id=user_id,
                     content_type='voice',
                     original_content=voice.file_id,
                     display_text=analysis['display_text'],
                     search_text=analysis['search_text'],
-                    meta=analysis['metadata'],
+                    meta=enriched_meta,
                     embedding=embedding
                 )
                 session.add(memory)
@@ -409,13 +427,19 @@ class TelegramBot:
             embedding = AIEngine.generate_embedding(rich_content_for_embedding)
             
             with get_db_session() as session:
+                # Enrich metadata with code detection
+                enriched_meta = AIEngine.enrich_meta(
+                    analysis['metadata'], 
+                    analysis['search_text']
+                )
+                
                 memory = Memory(
                     user_id=user_id,
                     content_type='link',
                     original_content=url,
                     display_text=analysis['display_text'],
                     search_text=analysis['search_text'],
-                    meta=analysis['metadata'],
+                    meta=enriched_meta,
                     embedding=embedding
                 )
                 session.add(memory)

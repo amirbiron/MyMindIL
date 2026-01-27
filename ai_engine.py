@@ -6,6 +6,7 @@ import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import json
 import logging
+import re
 import threading
 from typing import Dict, List, Optional, Iterable
 from config import Config
@@ -286,55 +287,108 @@ class AIEngine:
             logger.error(f"AI analysis failed: {e}")
             return _fallback_analysis(content, content_type, error=e)
     
-    @staticmethod
-    def get_embedding(text: str, task_type: str = "RETRIEVAL_DOCUMENT") -> List[float]:
-        """
-        Generates embedding with specific task type to improve accuracy.
-        task_type options: 'RETRIEVAL_DOCUMENT' (for storage) or 'RETRIEVAL_QUERY' (for search)
-        """
-        try:
-            # שימוש במודל היציב והנפוץ ביותר
-            model_name = "models/text-embedding-004"
-            result = genai.embed_content(
-                model=model_name,
-                content=text,
-                task_type=task_type,
-                # כותרת נדרשת רק עבור DOCUMENT, אפשר לשים ריק או קבוע
-                title="Memory" if task_type == "RETRIEVAL_DOCUMENT" else None
-            )
-            embedding = result['embedding']
-            # בדיקת שפיות - האם קיבלנו וקטור?
-            if not embedding:
-                logger.error("Generated embedding is empty")
-                return []
-            return embedding
-        except Exception as e:
-            # אם המודל הספציפי לא נמצא, ננסה Fallback למודל הכי בסיסי
-            logger.error(f"Primary embedding model failed: {e}. Trying fallback...")
-            try:
-                # ניסיון אחרון עם המודל הבסיסי ביותר (לפעמים נקרא פשוט embedding-001)
-                result = genai.embed_content(
-                    model="models/embedding-001",
-                    content=text,
-                    task_type=task_type
-                )
-                return result['embedding']
-            except Exception as e2:
-                logger.error(f"All embedding attempts failed: {e2}")
-                return []
+    # Model and dimension constants for embeddings
+    # NOTE: task_type is NOT supported by text-embedding-004 (only by embedding-001)
+    # See: https://ai.google.dev/api/embeddings
+    EMBED_MODEL = "models/text-embedding-004"
+    EMBED_DIM = Config.EMBEDDING_DIMENSION  # 768
 
-    # מעטפת לשמירה (Ingestion)
     @staticmethod
     def generate_embedding(text: str) -> List[float]:
-        # כאן אנחנו אומרים לו: זה מידע שנשמר במסד נתונים
-        return AIEngine.get_embedding(text, task_type="RETRIEVAL_DOCUMENT")
+        """
+        Generate embedding for text using text-embedding-004.
+        
+        IMPORTANT: 
+        - No fallback to other models (to avoid dimension mismatch)
+        - No task_type (not supported by text-embedding-004)
+        - Enforces output_dimensionality for consistency
+        - Raises exception on failure (don't save garbage to DB)
+        
+        Args:
+            text: Text to embed
+            
+        Returns:
+            List of floats (embedding vector)
+            
+        Raises:
+            ValueError: If text is empty or embedding fails
+        """
+        text = (text or "").strip()
+        if not text:
+            raise ValueError("generate_embedding: empty text")
+        
+        try:
+            result = genai.embed_content(
+                model=AIEngine.EMBED_MODEL,
+                content=text,
+                output_dimensionality=AIEngine.EMBED_DIM,  # Enforce consistent dimensions
+            )
+            
+            # Handle different response formats from the API
+            embedding = result.get('embedding')
+            if isinstance(embedding, dict) and 'values' in embedding:
+                embedding = embedding['values']
+            
+            if not embedding or len(embedding) != AIEngine.EMBED_DIM:
+                raise ValueError(
+                    f"Bad embedding length: expected {AIEngine.EMBED_DIM}, "
+                    f"got {0 if not embedding else len(embedding)}"
+                )
+            
+            return embedding
+            
+        except Exception as e:
+            logger.error(f"Embedding generation failed: {e}")
+            raise ValueError(f"Failed to generate embedding: {e}")
 
-    # מעטפת לחיפוש (Search)
     @staticmethod
     def generate_query_embedding(query: str) -> List[float]:
-        # כאן אנחנו אומרים לו: זו שאילתה של משתמש שרוצה למצוא משהו
-        return AIEngine.get_embedding(query, task_type="RETRIEVAL_QUERY")
+        """
+        Generate embedding for search query.
+        
+        NOTE: With text-embedding-004, there's no distinction between document
+        and query embeddings (task_type is not supported). We use the same
+        function for both, and rely on hybrid search for better results.
+        
+        Args:
+            query: Search query text
+            
+        Returns:
+            List of floats (embedding vector)
+        """
+        return AIEngine.generate_embedding(query)
     
+    # Regex pattern for detecting code-like content
+    CODE_HINTS_PATTERN = re.compile(
+        r"(```|def\s+\w+|class\s+\w+|import\s+\w+|from\s+\w+\s+import|"
+        r"function\s+\w+|const\s+\w+|let\s+\w+|var\s+\w+|"
+        r"pip\s+install|npm\s+install|Traceback|Exception:|Error:|"
+        r"SELECT\s+|INSERT\s+|UPDATE\s+|DELETE\s+|"
+        r"\{\s*\n|\}\s*\n|=>\s*\{|\(\)\s*\{)",
+        re.IGNORECASE | re.MULTILINE
+    )
+
+    @staticmethod
+    def enrich_meta(meta: Optional[Dict], search_text: str) -> Dict:
+        """
+        Enrich metadata with code detection flag.
+        
+        This helps the hybrid search boost code-related memories when
+        the query appears to be about code.
+        
+        Args:
+            meta: Existing metadata dictionary (can be None)
+            search_text: Text to analyze for code patterns
+            
+        Returns:
+            Enriched metadata dictionary with 'contains_code' flag
+        """
+        result = dict(meta or {})
+        result["contains_code"] = bool(
+            AIEngine.CODE_HINTS_PATTERN.search(search_text or "")
+        )
+        return result
+
     @staticmethod
     def batch_generate_embeddings(texts: List[str]) -> List[List[float]]:
         """

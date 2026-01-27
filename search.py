@@ -175,6 +175,40 @@ class SearchEngine:
             raise
 
     @staticmethod
+    def delete_memory(user_id: int, memory_id: str) -> bool:
+        """
+        Delete a specific memory for a user
+
+        Args:
+            user_id: Telegram user ID
+            memory_id: Memory UUID to delete
+
+        Returns:
+            True if deleted successfully, False otherwise
+        """
+        try:
+            with get_db_session() as session:
+                # Find the memory - ensure it belongs to the user
+                memory = session.query(Memory).filter(
+                    Memory.id == memory_id,
+                    Memory.user_id == user_id
+                ).first()
+
+                if not memory:
+                    logger.warning(
+                        f"Memory {memory_id} not found for user {user_id}"
+                    )
+                    return False
+
+                session.delete(memory)
+                logger.info(f"Deleted memory {memory_id} for user {user_id}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Failed to delete memory {memory_id}: {e}")
+            return False
+
+    @staticmethod
     def get_memory_stats(user_id: int) -> Dict:
         """
         Get statistics about user's memories

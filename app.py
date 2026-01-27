@@ -7,6 +7,7 @@ from telegram import Update
 import asyncio
 import logging
 import os
+import threading
 from config import Config
 from database import init_db, check_db_connection, get_db_stats
 from bot import TelegramBot
@@ -26,6 +27,8 @@ app.config.from_object(Config)
 
 # Initialize bot
 bot_instance: Optional[TelegramBot] = None
+_init_lock = threading.Lock()
+_app_initialized = False
 
 
 def init_app():
@@ -48,6 +51,27 @@ def init_app():
     logger.info("Bot initialized")
     
     return bot_instance
+
+
+def ensure_initialized():
+    """Ensure the application and bot are initialized once."""
+    global _app_initialized, bot_instance
+    if _app_initialized:
+        return
+    with _init_lock:
+        if _app_initialized:
+            return
+        bot_instance = init_app()
+        _app_initialized = True
+
+
+def ensure_webhook():
+    """Ensure webhook is set in production environments."""
+    if Config.TELEGRAM_WEBHOOK_URL:
+        try:
+            setup_webhook_async()
+        except Exception as e:
+            logger.error(f"Failed to set webhook: {e}")
 
 
 # ============================================================================
@@ -221,6 +245,8 @@ async def webhook():
     Receives updates from Telegram and processes them
     """
     try:
+        if bot_instance is None:
+            ensure_initialized()
         update = Update.de_json(request.get_json(), bot_instance.app.bot)
         await bot_instance.app.process_update(update)
         return jsonify({'ok': True})
@@ -293,15 +319,23 @@ def setup_webhook_async():
     loop.close()
 
 
+def bootstrap_app():
+    """Initialize components for WSGI servers like gunicorn."""
+    ensure_initialized()
+    ensure_webhook()
+
+
+bootstrap_app()
+
+
 if __name__ == '__main__':
     # Initialize app
-    init_app()
+    bootstrap_app()
     
     # Check if running in webhook or polling mode
     if Config.TELEGRAM_WEBHOOK_URL:
         # Production mode - webhook
         logger.info("Running in WEBHOOK mode")
-        setup_webhook_async()
         
         # Run Flask app (use gunicorn in production)
         app.run(

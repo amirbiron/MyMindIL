@@ -40,7 +40,10 @@ class Config:
     GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
     
     # AI Models
-    GEMINI_MODEL = 'gemini-1.5-flash'
+    GEMINI_TEXT_MODEL = os.getenv('GEMINI_TEXT_MODEL', 'gemini-pro')
+    GEMINI_VISION_MODEL = os.getenv('GEMINI_VISION_MODEL', 'gemini-pro-vision')
+    # Backward-compatible single model setting (defaults to text model)
+    GEMINI_MODEL = os.getenv('GEMINI_MODEL', GEMINI_TEXT_MODEL)
     EMBEDDING_MODEL = 'models/text-embedding-004'
     EMBEDDING_DIMENSION = 768
     

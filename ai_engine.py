@@ -270,20 +270,6 @@ class AIEngine:
                 result['search_text'] = content
             if 'metadata' not in result:
                 result['metadata'] = {}
-
-            # Ensure tags contribute to search text for better recall
-            search_text = result.get('search_text') or ''
-            if not isinstance(search_text, str):
-                search_text = str(search_text)
-            tags = result.get('metadata', {}).get('tags') or []
-            if tags:
-                tag_text = " ".join(str(tag) for tag in tags if tag)
-                if tag_text:
-                    result['search_text'] = f"{search_text} {tag_text}".strip()
-                else:
-                    result['search_text'] = search_text
-            else:
-                result['search_text'] = search_text
             
             logger.info(f"Successfully analyzed {content_type} content")
             return result

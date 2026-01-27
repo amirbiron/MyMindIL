@@ -89,30 +89,6 @@ class SearchEngine:
                     memory_dict = memory.to_dict()
                     memory_dict['similarity'] = float(similarity)
                     memories.append(memory_dict)
-
-                # Hybrid ranking: boost exact text/tag matches above pure semantic
-                query_text = (query or '').strip().lower()
-                if query_text:
-                    for memory in memories:
-                        display_text = (memory.get('display_text') or '').lower()
-                        search_text = (memory.get('search_text') or '').lower()
-                        tags = memory.get('metadata', {}).get('tags') or []
-                        tags_text = " ".join(str(tag) for tag in tags).lower()
-
-                        text_match = (
-                            query_text in display_text
-                            or query_text in search_text
-                            or (tags_text and query_text in tags_text)
-                        )
-                        memory['_text_match'] = 1 if text_match else 0
-
-                    memories.sort(
-                        key=lambda m: (m.get('_text_match', 0), m.get('similarity', 0.0)),
-                        reverse=True
-                    )
-
-                    for memory in memories:
-                        memory.pop('_text_match', None)
                 
                 logger.info(
                     f"Search completed for user {user_id}: "

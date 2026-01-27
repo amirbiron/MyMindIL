@@ -180,10 +180,10 @@ class SearchEngine:
 
             sql = f"""
             WITH vector_results AS (
-                SELECT id, 1 - (embedding <=> :embedding::vector) as score
+                SELECT id, 1 - (embedding <=> CAST(:embedding AS vector)) as score
                 FROM memories
                 WHERE user_id = :user_id{filters_sql}
-                ORDER BY embedding <=> :embedding::vector ASC
+                ORDER BY embedding <=> CAST(:embedding AS vector) ASC
                 LIMIT :limit
             ),
             text_results AS (
@@ -244,6 +244,7 @@ class SearchEngine:
             return results
             
         except Exception as e:
+            session.rollback()
             logger.warning(f"Hybrid search failed, falling back to vector search: {e}")
             # Fallback to vector-only search if hybrid fails
             return SearchEngine._vector_search(

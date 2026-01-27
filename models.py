@@ -26,7 +26,9 @@ class Memory(Base):
     # AI-generated fields
     display_text = Column(Text, nullable=False)  # Hebrew summary for display
     search_text = Column(Text, nullable=False)  # Optimized text for keyword search
-    metadata = Column(JSONB, nullable=False, default=dict)  # Structured data
+    # NOTE: "metadata" is a reserved attribute name in SQLAlchemy Declarative.
+    # Keep the DB column name as "metadata" but expose it as "meta" in Python.
+    meta = Column("metadata", JSONB, nullable=False, default=dict)  # Structured data
     
     # Vector embedding for semantic search
     embedding = Column(Vector(Config.EMBEDDING_DIMENSION), nullable=False)
@@ -60,7 +62,7 @@ class Memory(Base):
             'original_content': self.original_content,
             'display_text': self.display_text,
             'search_text': self.search_text,
-            'metadata': self.metadata,
+            'metadata': self.meta,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
     

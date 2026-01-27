@@ -56,7 +56,7 @@ class SearchEngine:
                         if value is not None:
                             # Use JSONB operators for filtering
                             base_query = base_query.filter(
-                                Memory.metadata[key].astext == str(value)
+                                Memory.meta[key].astext == str(value)
                             )
                 
                 # Order by similarity and apply pagination
@@ -111,7 +111,7 @@ class SearchEngine:
                 for key, value in metadata_query.items():
                     if value is not None:
                         query = query.filter(
-                            Memory.metadata[key].astext == str(value)
+                            Memory.meta[key].astext == str(value)
                         )
                 
                 # Order by creation date (newest first)
@@ -204,13 +204,13 @@ class SearchEngine:
                 
                 # Count by category (from metadata)
                 category_counts = session.query(
-                    Memory.metadata['category'].astext,
+                    Memory.meta['category'].astext,
                     func.count(Memory.id)
                 ).filter(
                     Memory.user_id == user_id,
-                    Memory.metadata['category'].astext.isnot(None)
+                    Memory.meta['category'].astext.isnot(None)
                 ).group_by(
-                    Memory.metadata['category'].astext
+                    Memory.meta['category'].astext
                 ).limit(10).all()
                 
                 stats = {

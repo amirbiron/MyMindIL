@@ -3,15 +3,17 @@ Search module for semantic and hybrid search
 
 Implements:
 - Vector search using pgvector cosine distance
-- Trigram-based fuzzy text search using pg_trgm
-- Hybrid search combining both with simple score fusion
+- Full-text search using PostgreSQL tsvector
+- Hybrid search combining both using Reciprocal Rank Fusion (RRF)
 """
-from sqlalchemy import func, literal, text
+from sqlalchemy import func, and_, or_, cast, String, select, desc, case, text, literal
+from sqlalchemy.dialects.postgresql import JSONB
 from models import Memory
 from ai_engine import AIEngine
 from database import get_db_session
+from config import Config
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +31,7 @@ class SearchEngine:
         use_hybrid: bool = True
     ) -> List[Dict]:
         """
-        Search memories using hybrid search (vector + trigram text).
+        Search memories using hybrid search (vector + keyword) with RRF fusion.
         
         Args:
             user_id: Telegram user ID
@@ -53,15 +55,9 @@ class SearchEngine:
                 return []
 
             with get_db_session() as session:
-                try:
-                    session.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
-                except Exception as e:
-                    session.rollback()
-                    logger.warning(f"Failed to ensure pg_trgm extension: {e}")
-
                 if use_hybrid:
-                    # Use hybrid search (vector + trigram)
-                    return SearchEngine._hybrid_search_raw(
+                    # Use hybrid search with RRF
+                    return SearchEngine._hybrid_search(
                         session, user_id, query, query_embedding, 
                         limit, offset, filters
                     )
@@ -100,8 +96,15 @@ class SearchEngine:
         stmt = session.query(Memory, similarity_expr.label('similarity')).filter(
             Memory.user_id == user_id
         )
-
-        stmt = SearchEngine._apply_filters(stmt, filters)
+        
+        # Apply filters
+        if filters:
+            for key, value in filters.items():
+                if value:
+                    if key == 'content_type':
+                        stmt = stmt.filter(Memory.content_type == str(value))
+                    else:
+                        stmt = stmt.filter(Memory.meta[key].astext == str(value))
         
         # Order by distance ASC (most similar first) - this allows HNSW index usage
         results = stmt.order_by(
@@ -122,19 +125,27 @@ class SearchEngine:
         return memories
 
     @staticmethod
-    def _hybrid_search_raw(
+    def _hybrid_search(
         session,
         user_id: int,
         query_text: str,
         query_embedding: List[float],
         limit: int,
         offset: int,
-        filters: Optional[Dict]
+        filters: Optional[Dict],
+        vec_candidates: int = 50,
+        text_candidates: int = 50,
+        rrf_k: int = 60,
+        boost_code: float = 0.20,
+        boost_text_type: float = 0.05
     ) -> List[Dict]:
         """
-        Hybrid search combining vector similarity with trigram text similarity
-        using raw SQL (CTE-based).
-
+        Hybrid search combining vector similarity and full-text search using RRF.
+        
+        This approach helps fix issues like "recycling icon" ranking higher than
+        "python code" when searching for "python code" - the keyword match on
+        "python" will boost the code result even if the vector similarity is similar.
+        
         Args:
             session: Database session
             user_id: User ID to filter by
@@ -143,125 +154,141 @@ class SearchEngine:
             limit: Max results to return
             offset: Pagination offset
             filters: Optional metadata filters
+            vec_candidates: Number of vector search candidates
+            text_candidates: Number of text search candidates
+            rrf_k: RRF smoothing constant (typically 30-100)
+            boost_code: Score boost for content with code
+            boost_text_type: Score boost for text content type
+            
         Returns:
             List of memory dictionaries with hybrid scores
         """
         try:
-            embedding_str = "[" + ",".join(
-                str(float(value)) for value in query_embedding
-            ) + "]"
-            query_param = str(query_text)
-
-            filters_sql = ""
-            filters_params = {}
+            # ----- Vector candidates -----
+            distance_expr = Memory.embedding.cosine_distance(query_embedding)
+            
+            vec_query = session.query(
+                Memory.id.label("id"),
+                func.rank().over(order_by=distance_expr.asc()).label("vec_rank"),
+                (1 - distance_expr).label("vec_similarity")
+            ).filter(Memory.user_id == user_id)
+            
+            # Apply filters to vector search
             if filters:
-                filter_clauses = []
-                meta_index = 0
                 for key, value in filters.items():
-                    if not value:
-                        continue
-                    if key == 'content_type':
-                        filter_clauses.append(
-                            "memories.content_type = :content_type_filter"
-                        )
-                        filters_params["content_type_filter"] = str(value)
-                    else:
-                        meta_key_param = f"meta_key_{meta_index}"
-                        meta_value_param = f"meta_value_{meta_index}"
-                        filter_clauses.append(
-                            f"memories.metadata ->> :{meta_key_param} = :{meta_value_param}"
-                        )
-                        filters_params[meta_key_param] = str(key)
-                        filters_params[meta_value_param] = str(value)
-                        meta_index += 1
-
-                if filter_clauses:
-                    filters_sql = " AND " + " AND ".join(filter_clauses)
-
-            sql = f"""
-            WITH vector_results AS (
-                SELECT id, 1 - (embedding <=> CAST(:embedding AS vector)) as score
-                FROM memories
-                WHERE user_id = :user_id{filters_sql}
-                ORDER BY embedding <=> CAST(:embedding AS vector) ASC
-                LIMIT :limit
-            ),
-            text_results AS (
-                SELECT id, similarity((coalesce(search_text, '') || ' ' || coalesce(display_text, '')), :query) as score
-                FROM memories
-                WHERE user_id = :user_id{filters_sql}
-                AND (coalesce(search_text, '') || ' ' || coalesce(display_text, '')) % :query
-                ORDER BY score DESC
-                LIMIT :limit
-            )
-            SELECT m.id as id,
-                   m.user_id as user_id,
-                   m.content_type as content_type,
-                   m.display_text as display_text,
-                   m.search_text as search_text,
-                   m.original_content as original_content,
-                   m.created_at as created_at,
-                   m.metadata as metadata,
-                   COALESCE(v.score, 0) + COALESCE(t.score, 0) as final_score
-            FROM memories m
-            LEFT JOIN vector_results v ON m.id = v.id
-            LEFT JOIN text_results t ON m.id = t.id
-            WHERE v.id IS NOT NULL OR t.id IS NOT NULL
-            ORDER BY final_score DESC
-            LIMIT :limit OFFSET :offset;
-            """
-
-            params = {
-                "embedding": embedding_str,
-                "user_id": user_id,
-                "query": query_param,
-                "limit": limit,
-                "offset": offset,
-            }
-            params.update(filters_params)
-
-            rows = session.execute(text(sql), params).mappings().all()
+                    if value:
+                        if key == 'content_type':
+                            vec_query = vec_query.filter(Memory.content_type == str(value))
+                        else:
+                            vec_query = vec_query.filter(Memory.meta[key].astext == str(value))
+            
+            vec_query = vec_query.order_by(distance_expr.asc()).limit(vec_candidates)
+            vec_results = {row.id: (row.vec_rank, row.vec_similarity) for row in vec_query.all()}
+            
+            # ----- Keyword candidates -----
+            # Use plainto_tsquery with 'simple' config (works well for Hebrew + code)
+            tsq = func.plainto_tsquery('simple', query_text)
+            
+            # Reference the search_tsv column (created by ensure_search_infra)
+            search_tsv_col = text("memories.search_tsv")
+            text_rank_expr = func.ts_rank_cd(search_tsv_col, tsq)
+            
+            text_query = session.query(
+                Memory.id.label("id"),
+                func.rank().over(order_by=text_rank_expr.desc()).label("text_rank"),
+                text_rank_expr.label("text_score")
+            ).filter(
+                Memory.user_id == user_id,
+                text(f"memories.search_tsv @@ plainto_tsquery('simple', :query)")
+            ).params(query=query_text)
+            
+            # Apply same filters to text search
+            if filters:
+                for key, value in filters.items():
+                    if value:
+                        if key == 'content_type':
+                            text_query = text_query.filter(Memory.content_type == str(value))
+                        else:
+                            text_query = text_query.filter(Memory.meta[key].astext == str(value))
+            
+            text_query = text_query.order_by(text_rank_expr.desc()).limit(text_candidates)
+            text_results = {row.id: (row.text_rank, row.text_score) for row in text_query.all()}
+            
+            # ----- Combine candidates -----
+            all_ids = set(vec_results.keys()) | set(text_results.keys())
+            
+            if not all_ids:
+                logger.info("Hybrid search found no candidates")
+                return []
+            
+            # Calculate RRF scores
+            scored_ids = []
+            for memory_id in all_ids:
+                vec_rank, vec_sim = vec_results.get(memory_id, (None, 0))
+                text_rank, text_score = text_results.get(memory_id, (None, 0))
+                
+                # RRF formula: 1 / (k + rank)
+                rrf_score = 0.0
+                if vec_rank is not None:
+                    rrf_score += 1.0 / (rrf_k + vec_rank)
+                if text_rank is not None:
+                    rrf_score += 1.0 / (rrf_k + text_rank)
+                
+                scored_ids.append((memory_id, rrf_score, vec_sim or 0))
+            
+            # Sort by RRF score descending
+            scored_ids.sort(key=lambda x: x[1], reverse=True)
+            
+            # Apply offset and limit
+            scored_ids = scored_ids[offset:offset + limit]
+            
+            if not scored_ids:
+                return []
+            
+            # Fetch full Memory objects
+            memory_ids = [mid for mid, _, _ in scored_ids]
+            memories_query = session.query(Memory).filter(Memory.id.in_(memory_ids))
+            memories_map = {m.id: m for m in memories_query.all()}
+            
+            # Build results with boosts applied
             results = []
-
-            for row in rows:
-                final_score = float(row["final_score"] or 0.0)
-                memory_dict = {
-                    'id': str(row["id"]),
-                    'user_id': row["user_id"],
-                    'content_type': row["content_type"],
-                    'original_content': row["original_content"],
-                    'display_text': row["display_text"],
-                    'search_text': row["search_text"],
-                    'metadata': row["metadata"],
-                    'created_at': row["created_at"].isoformat() if row["created_at"] else None,
-                }
-                memory_dict['similarity'] = final_score
-                memory_dict['hybrid_score'] = final_score
+            for memory_id, rrf_score, vec_sim in scored_ids:
+                memory = memories_map.get(memory_id)
+                if not memory:
+                    continue
+                
+                # Apply boosts
+                final_score = rrf_score
+                
+                # Boost for code content
+                if memory.meta and memory.meta.get("contains_code"):
+                    final_score += boost_code
+                
+                # Small boost for text content type (vs images)
+                if memory.content_type == "text":
+                    final_score += boost_text_type
+                
+                memory_dict = memory.to_dict()
+                memory_dict['similarity'] = float(vec_sim)  # Original vector similarity
+                memory_dict['hybrid_score'] = float(final_score)  # Combined RRF score
                 results.append(memory_dict)
-
-            logger.info(f"Hybrid search (raw) returned {len(results)} results")
-
+            
+            # Re-sort by final score after boosts
+            results.sort(key=lambda x: x['hybrid_score'], reverse=True)
+            
+            logger.info(
+                f"Hybrid search: {len(vec_results)} vector + {len(text_results)} text "
+                f"candidates -> {len(results)} results"
+            )
+            
             return results
             
         except Exception as e:
-            session.rollback()
             logger.warning(f"Hybrid search failed, falling back to vector search: {e}")
             # Fallback to vector-only search if hybrid fails
             return SearchEngine._vector_search(
                 session, user_id, query_embedding, limit, offset, filters
             )
-
-    @staticmethod
-    def _apply_filters(stmt, filters: Optional[Dict]):
-        if not filters:
-            return stmt
-        for key, value in filters.items():
-            if value:
-                if key == 'content_type':
-                    stmt = stmt.filter(Memory.content_type == str(value))
-                else:
-                    stmt = stmt.filter(Memory.meta[key].astext == str(value))
-        return stmt
 
     @staticmethod
     def search_by_metadata(

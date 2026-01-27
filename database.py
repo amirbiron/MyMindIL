@@ -51,19 +51,17 @@ def get_db_session():
 
 def ensure_search_infra(conn):
     """
-    Ensure search infrastructure is set up (text + vector indexes).
-
+    Ensure search infrastructure is set up (tsvector column + indexes).
+    
     This runs DDL that create_all() doesn't handle well:
     - GENERATED ALWAYS AS ... STORED columns
     - Custom indexes with specific opclasses
-
+    
     Safe to run multiple times (uses IF NOT EXISTS).
     """
     ddl_statements = [
         # pgvector extension (redundant but safe)
         "CREATE EXTENSION IF NOT EXISTS vector;",
-        # pg_trgm extension for trigram similarity
-        "CREATE EXTENSION IF NOT EXISTS pg_trgm;",
         
         # Add tsvector generated column for full-text search
         # Uses 'simple' config for Hebrew + code (no stemming)
@@ -87,14 +85,6 @@ def ensure_search_infra(conn):
         """
         CREATE INDEX IF NOT EXISTS idx_memories_search_tsv
         ON memories USING gin (search_tsv);
-        """,
-
-        # GIN trigram index for fuzzy text search
-        """
-        CREATE INDEX IF NOT EXISTS idx_memories_search_trgm
-        ON memories USING gin (
-            (coalesce(search_text, '') || ' ' || coalesce(display_text, '')) gin_trgm_ops
-        );
         """,
         
         # HNSW index for vector similarity search (cosine distance)

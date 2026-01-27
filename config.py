@@ -35,6 +35,7 @@ class Config:
     # Telegram
     TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
     TELEGRAM_WEBHOOK_URL = os.getenv('TELEGRAM_WEBHOOK_URL')  # https://yourdomain.com/webhook
+    TELEGRAM_BOT_USERNAME = os.getenv('TELEGRAM_BOT_USERNAME')  # For login widget fallback
     
     # Google AI
     GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')

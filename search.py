@@ -6,7 +6,7 @@ Implements:
 - Trigram-based fuzzy text search using pg_trgm
 - Hybrid search combining both with simple score fusion
 """
-from sqlalchemy import func, literal
+from sqlalchemy import func, literal, text
 from models import Memory
 from ai_engine import AIEngine
 from database import get_db_session
@@ -53,9 +53,15 @@ class SearchEngine:
                 return []
 
             with get_db_session() as session:
+                try:
+                    session.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+                except Exception as e:
+                    session.rollback()
+                    logger.warning(f"Failed to ensure pg_trgm extension: {e}")
+
                 if use_hybrid:
                     # Use hybrid search (vector + trigram)
-                    return SearchEngine._hybrid_search(
+                    return SearchEngine._hybrid_search_raw(
                         session, user_id, query, query_embedding, 
                         limit, offset, filters
                     )
@@ -116,22 +122,18 @@ class SearchEngine:
         return memories
 
     @staticmethod
-    def _hybrid_search(
+    def _hybrid_search_raw(
         session,
         user_id: int,
         query_text: str,
         query_embedding: List[float],
         limit: int,
         offset: int,
-        filters: Optional[Dict],
-        vec_candidates: int = 50,
-        text_candidates: int = 50
+        filters: Optional[Dict]
     ) -> List[Dict]:
         """
-        Hybrid search combining vector similarity with trigram text similarity.
-
-        This uses pg_trgm to handle Hebrew misspellings and near-matches, and
-        fuses results by summing vector and text similarity scores.
+        Hybrid search combining vector similarity with trigram text similarity
+        using raw SQL (CTE-based).
 
         Args:
             session: Database session
@@ -141,87 +143,103 @@ class SearchEngine:
             limit: Max results to return
             offset: Pagination offset
             filters: Optional metadata filters
-            vec_candidates: Number of vector search candidates
-            text_candidates: Number of text search candidates
-            
         Returns:
             List of memory dictionaries with hybrid scores
         """
         try:
-            # ----- Vector candidates -----
-            distance_expr = Memory.embedding.cosine_distance(query_embedding)
-            vec_limit = max(vec_candidates, limit + offset)
+            embedding_str = "[" + ",".join(
+                str(float(value)) for value in query_embedding
+            ) + "]"
+            query_param = str(query_text)
 
-            vec_query = session.query(
-                Memory.id.label("id"),
-                (1 - distance_expr).label("vec_score")
-            ).filter(Memory.user_id == user_id)
+            filters_sql = ""
+            filters_params = {}
+            if filters:
+                filter_clauses = []
+                meta_index = 0
+                for key, value in filters.items():
+                    if not value:
+                        continue
+                    if key == 'content_type':
+                        filter_clauses.append(
+                            "memories.content_type = :content_type_filter"
+                        )
+                        filters_params["content_type_filter"] = str(value)
+                    else:
+                        meta_key_param = f"meta_key_{meta_index}"
+                        meta_value_param = f"meta_value_{meta_index}"
+                        filter_clauses.append(
+                            f"memories.metadata ->> :{meta_key_param} = :{meta_value_param}"
+                        )
+                        filters_params[meta_key_param] = str(key)
+                        filters_params[meta_value_param] = str(value)
+                        meta_index += 1
 
-            vec_query = SearchEngine._apply_filters(vec_query, filters)
-            vec_query = vec_query.order_by(distance_expr.asc()).limit(vec_limit)
-            vec_results = {row.id: float(row.vec_score or 0.0) for row in vec_query.all()}
+                if filter_clauses:
+                    filters_sql = " AND " + " AND ".join(filter_clauses)
 
-            # ----- Trigram candidates -----
-            text_limit = max(text_candidates, limit + offset)
-            search_blob = (
-                func.coalesce(Memory.search_text, "")
-                + literal(" ")
-                + func.coalesce(Memory.display_text, "")
+            sql = f"""
+            WITH vector_results AS (
+                SELECT id, 1 - (embedding <=> :embedding::vector) as score
+                FROM memories
+                WHERE user_id = :user_id{filters_sql}
+                ORDER BY embedding <=> :embedding::vector ASC
+                LIMIT :limit
+            ),
+            text_results AS (
+                SELECT id, similarity((coalesce(search_text, '') || ' ' || coalesce(display_text, '')), :query) as score
+                FROM memories
+                WHERE user_id = :user_id{filters_sql}
+                AND (coalesce(search_text, '') || ' ' || coalesce(display_text, '')) % :query
+                ORDER BY score DESC
+                LIMIT :limit
             )
-            text_score_expr = func.similarity(search_blob, query_text)
+            SELECT m.id as id,
+                   m.user_id as user_id,
+                   m.content_type as content_type,
+                   m.display_text as display_text,
+                   m.search_text as search_text,
+                   m.original_content as original_content,
+                   m.created_at as created_at,
+                   m.metadata as metadata,
+                   COALESCE(v.score, 0) + COALESCE(t.score, 0) as final_score
+            FROM memories m
+            LEFT JOIN vector_results v ON m.id = v.id
+            LEFT JOIN text_results t ON m.id = t.id
+            WHERE v.id IS NOT NULL OR t.id IS NOT NULL
+            ORDER BY final_score DESC
+            LIMIT :limit OFFSET :offset;
+            """
 
-            text_query = session.query(
-                Memory.id.label("id"),
-                text_score_expr.label("text_score")
-            ).filter(
-                Memory.user_id == user_id,
-                search_blob.op('%')(query_text)
-            )
+            params = {
+                "embedding": embedding_str,
+                "user_id": user_id,
+                "query": query_param,
+                "limit": limit,
+                "offset": offset,
+            }
+            params.update(filters_params)
 
-            text_query = SearchEngine._apply_filters(text_query, filters)
-            text_query = text_query.order_by(text_score_expr.desc()).limit(text_limit)
-            text_results = {row.id: float(row.text_score or 0.0) for row in text_query.all()}
-
-            # ----- Combine candidates -----
-            all_ids = set(vec_results.keys()) | set(text_results.keys())
-
-            if not all_ids:
-                logger.info("Hybrid search found no candidates")
-                return []
-
-            scored_ids = []
-            for memory_id in all_ids:
-                vec_score = vec_results.get(memory_id, 0.0)
-                text_score = text_results.get(memory_id, 0.0)
-                final_score = vec_score + text_score
-                scored_ids.append((memory_id, final_score))
-
-            scored_ids.sort(key=lambda x: x[1], reverse=True)
-            scored_ids = scored_ids[offset:offset + limit]
-
-            if not scored_ids:
-                return []
-
-            memory_ids = [mid for mid, _ in scored_ids]
-            memories_query = session.query(Memory).filter(Memory.id.in_(memory_ids))
-            memories_map = {m.id: m for m in memories_query.all()}
-
+            rows = session.execute(text(sql), params).mappings().all()
             results = []
-            for memory_id, final_score in scored_ids:
-                memory = memories_map.get(memory_id)
-                if not memory:
-                    continue
-                memory_dict = memory.to_dict()
-                memory_dict['similarity'] = float(final_score)
-                memory_dict['hybrid_score'] = float(final_score)
+
+            for row in rows:
+                final_score = float(row["final_score"] or 0.0)
+                memory_dict = {
+                    'id': str(row["id"]),
+                    'user_id': row["user_id"],
+                    'content_type': row["content_type"],
+                    'original_content': row["original_content"],
+                    'display_text': row["display_text"],
+                    'search_text': row["search_text"],
+                    'metadata': row["metadata"],
+                    'created_at': row["created_at"].isoformat() if row["created_at"] else None,
+                }
+                memory_dict['similarity'] = final_score
+                memory_dict['hybrid_score'] = final_score
                 results.append(memory_dict)
 
-            results.sort(key=lambda x: x['hybrid_score'], reverse=True)
-
-            logger.info(
-                f"Hybrid search: {len(vec_results)} vector + {len(text_results)} text "
-                f"candidates -> {len(results)} results"
-            )
+            logger.info(f"Hybrid search (raw) returned {len(results)} results")
 
             return results
             

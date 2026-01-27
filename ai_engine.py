@@ -294,7 +294,7 @@ class AIEngine:
         """
         try:
             result = genai.embed_content(
-                model="models/text-embedding-004",
+                model="models/text-multilingual-embedding-002",
                 content=text,
                 task_type=task_type,
                 # כותרת נדרשת רק עבור DOCUMENT, אפשר לשים ריק או קבוע

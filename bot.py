@@ -434,7 +434,9 @@ class TelegramBot:
             )
             logger.info(f"Webhook set to {self.webhook_url}")
         finally:
-            await bot.close()
+            shutdown = getattr(bot, "shutdown", None)
+            if callable(shutdown):
+                await shutdown()
     
     def run_polling(self):
         """Run bot in polling mode (development)"""

@@ -221,9 +221,11 @@ class TelegramBot:
             # Analyze with AI
             analysis = AIEngine.analyze_content(text, content_type='text')
             
-            # Generate embedding
-            embedding_text = f"{analysis['display_text']} {analysis['search_text']}"
-            embedding = AIEngine.generate_embedding(embedding_text)
+            # Generate embedding with rich content (combining description, search terms, and type)
+            rich_content_for_embedding = f"""תיאור: {analysis['display_text']}
+מילות חיפוש: {analysis['search_text']}
+סוג תוכן: text"""
+            embedding = AIEngine.generate_embedding(rich_content_for_embedding)
             
             # Save to database
             with get_db_session() as session:
@@ -273,9 +275,11 @@ class TelegramBot:
                 image_data=bytes(photo_bytes)
             )
             
-            # Generate embedding
-            embedding_text = f"{analysis['display_text']} {analysis['search_text']}"
-            embedding = AIEngine.generate_embedding(embedding_text)
+            # Generate embedding with rich content (combining description, search terms, and type)
+            rich_content_for_embedding = f"""תיאור: {analysis['display_text']}
+מילות חיפוש: {analysis['search_text']}
+סוג תוכן: image"""
+            embedding = AIEngine.generate_embedding(rich_content_for_embedding)
             
             # Save to database
             with get_db_session() as session:
@@ -319,7 +323,7 @@ class TelegramBot:
             # Basic analysis without transcription
             analysis = {
                 'display_text': placeholder_text,
-                'search_text': 'הקלטת קול',
+                'search_text': 'הקלטת קול voice recording memo',
                 'metadata': {
                     'duration': voice.duration,
                     'category': 'voice_memo',
@@ -327,7 +331,11 @@ class TelegramBot:
                 }
             }
             
-            embedding = AIEngine.generate_embedding(analysis['search_text'])
+            # Generate embedding with rich content (combining description, search terms, and type)
+            rich_content_for_embedding = f"""תיאור: {analysis['display_text']}
+מילות חיפוש: {analysis['search_text']}
+סוג תוכן: voice"""
+            embedding = AIEngine.generate_embedding(rich_content_for_embedding)
             
             with get_db_session() as session:
                 memory = Memory(
@@ -394,8 +402,11 @@ class TelegramBot:
             # Add URL to metadata
             analysis['metadata']['url'] = url
             
-            embedding_text = f"{analysis['display_text']} {analysis['search_text']}"
-            embedding = AIEngine.generate_embedding(embedding_text)
+            # Generate embedding with rich content (combining description, search terms, and type)
+            rich_content_for_embedding = f"""תיאור: {analysis['display_text']}
+מילות חיפוש: {analysis['search_text']}
+סוג תוכן: link"""
+            embedding = AIEngine.generate_embedding(rich_content_for_embedding)
             
             with get_db_session() as session:
                 memory = Memory(

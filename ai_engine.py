@@ -318,11 +318,23 @@ class AIEngine:
             raise ValueError("generate_embedding: empty text")
         
         try:
-            result = genai.embed_content(
-                model=AIEngine.EMBED_MODEL,
-                content=text,
-                output_dimensionality=AIEngine.EMBED_DIM,  # Enforce consistent dimensions
-            )
+            try:
+                result = genai.embed_content(
+                    model=AIEngine.EMBED_MODEL,
+                    content=text,
+                    output_dimensionality=AIEngine.EMBED_DIM,  # Enforce consistent dimensions
+                )
+            except TypeError as e:
+                if "output_dimensionality" not in str(e):
+                    raise
+                logger.warning(
+                    "embed_content does not support output_dimensionality; "
+                    "retrying without it"
+                )
+                result = genai.embed_content(
+                    model=AIEngine.EMBED_MODEL,
+                    content=text,
+                )
             
             # Handle different response formats from the API
             embedding = result.get('embedding')

@@ -309,6 +309,53 @@ def api_recent():
         }), 500
 
 
+@app.route('/api/memory/<memory_id>', methods=['DELETE'])
+def api_delete_memory(memory_id):
+    """
+    Delete a specific memory
+    
+    URL params:
+        memory_id: UUID of the memory to delete
+    
+    Query params:
+        user_id: Telegram user ID (required)
+    
+    Response JSON:
+    {
+        "success": true,
+        "message": "Memory deleted"
+    }
+    """
+    try:
+        user_id = request.args.get('user_id', type=int)
+        
+        if not user_id:
+            return jsonify({'success': False, 'error': 'user_id required'}), 400
+        
+        if not memory_id:
+            return jsonify({'success': False, 'error': 'memory_id required'}), 400
+        
+        success = SearchEngine.delete_memory(user_id=user_id, memory_id=memory_id)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'Memory deleted successfully'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Memory not found or unauthorized'
+            }), 404
+        
+    except Exception as e:
+        logger.error(f"Delete API error: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @app.route('/api/media/telegram', methods=['GET'])
 def api_telegram_media():
     """Proxy Telegram files (images) for the web app."""

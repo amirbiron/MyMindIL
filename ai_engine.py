@@ -293,17 +293,35 @@ class AIEngine:
         task_type options: 'RETRIEVAL_DOCUMENT' (for storage) or 'RETRIEVAL_QUERY' (for search)
         """
         try:
+            # שימוש במודל היציב והנפוץ ביותר
+            model_name = "models/text-embedding-004"
             result = genai.embed_content(
-                model="models/text-multilingual-embedding-002",
+                model=model_name,
                 content=text,
                 task_type=task_type,
                 # כותרת נדרשת רק עבור DOCUMENT, אפשר לשים ריק או קבוע
                 title="Memory" if task_type == "RETRIEVAL_DOCUMENT" else None
             )
-            return result['embedding']
+            embedding = result['embedding']
+            # בדיקת שפיות - האם קיבלנו וקטור?
+            if not embedding:
+                logger.error("Generated embedding is empty")
+                return []
+            return embedding
         except Exception as e:
-            logger.error(f"Error generating embedding: {e}")
-            return []
+            # אם המודל הספציפי לא נמצא, ננסה Fallback למודל הכי בסיסי
+            logger.error(f"Primary embedding model failed: {e}. Trying fallback...")
+            try:
+                # ניסיון אחרון עם המודל הבסיסי ביותר (לפעמים נקרא פשוט embedding-001)
+                result = genai.embed_content(
+                    model="models/embedding-001",
+                    content=text,
+                    task_type=task_type
+                )
+                return result['embedding']
+            except Exception as e2:
+                logger.error(f"All embedding attempts failed: {e2}")
+                return []
 
     # מעטפת לשמירה (Ingestion)
     @staticmethod

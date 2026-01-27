@@ -250,6 +250,7 @@ async def webhook():
     try:
         if bot_instance is None:
             ensure_initialized()
+        await bot_instance.ensure_ready()
         update = Update.de_json(request.get_json(), bot_instance.app.bot)
         await bot_instance.app.process_update(update)
         return jsonify({'ok': True})

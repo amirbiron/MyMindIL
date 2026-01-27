@@ -6,7 +6,8 @@ import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import json
 import logging
-from typing import Dict, List, Optional, Tuple
+import threading
+from typing import Dict, List, Optional, Iterable
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -15,6 +16,12 @@ logger = logging.getLogger(__name__)
 genai.configure(api_key=Config.GOOGLE_API_KEY)
 
 # Initialize models
+_MODEL_LIST = None
+_MODEL_LIST_LOCK = threading.Lock()
+_MODEL_CACHE = {"text": None, "vision": None}
+_MODEL_NAME_CACHE = {"text": None, "vision": None}
+
+
 def _build_model(model_name: str) -> genai.GenerativeModel:
     return genai.GenerativeModel(
         model_name=model_name,
@@ -33,11 +40,128 @@ def _build_model(model_name: str) -> genai.GenerativeModel:
     )
 
 
-TEXT_MODEL_NAME = getattr(Config, 'GEMINI_TEXT_MODEL', None) or Config.GEMINI_MODEL
-VISION_MODEL_NAME = getattr(Config, 'GEMINI_VISION_MODEL', None) or Config.GEMINI_MODEL
+def _normalize_model_name(name: str) -> str:
+    if name.startswith('models/'):
+        return name
+    return f"models/{name}"
 
-analysis_text_model = _build_model(TEXT_MODEL_NAME)
-analysis_vision_model = _build_model(VISION_MODEL_NAME)
+
+def _dedupe(values: Iterable[str]) -> List[str]:
+    seen = set()
+    result = []
+    for value in values:
+        if not value:
+            continue
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def _looks_like_vision(model_name: str) -> bool:
+    lower = model_name.lower()
+    return "vision" in lower or "multimodal" in lower or "1.5" in lower
+
+
+def _list_available_models() -> Dict[str, object]:
+    global _MODEL_LIST
+    if _MODEL_LIST is not None:
+        return _MODEL_LIST
+    with _MODEL_LIST_LOCK:
+        if _MODEL_LIST is not None:
+            return _MODEL_LIST
+        try:
+            models = list(genai.list_models())
+            _MODEL_LIST = {model.name: model for model in models}
+        except Exception as e:
+            logger.warning(f"Failed to list Gemini models: {e}")
+            _MODEL_LIST = {}
+    return _MODEL_LIST
+
+
+def _select_model_name(kind: str) -> Optional[str]:
+    if kind == "vision":
+        candidates = _dedupe([
+            getattr(Config, 'GEMINI_VISION_MODEL', None),
+            getattr(Config, 'GEMINI_MODEL', None),
+            "gemini-1.5-pro",
+            "gemini-1.5-flash",
+            "gemini-1.0-pro-vision-latest",
+            "gemini-pro-vision",
+        ])
+    else:
+        candidates = _dedupe([
+            getattr(Config, 'GEMINI_TEXT_MODEL', None),
+            getattr(Config, 'GEMINI_MODEL', None),
+            "gemini-1.5-pro",
+            "gemini-1.5-flash",
+            "gemini-pro",
+        ])
+
+    available = _list_available_models()
+    if available:
+        normalized_candidates = [_normalize_model_name(name) for name in candidates]
+        for name in normalized_candidates:
+            model = available.get(name)
+            if not model:
+                continue
+            if "generateContent" not in model.supported_generation_methods:
+                continue
+            if kind == "vision" and not _looks_like_vision(model.name):
+                continue
+            return model.name
+
+        for model in available.values():
+            if "generateContent" not in model.supported_generation_methods:
+                continue
+            if kind == "vision" and not _looks_like_vision(model.name):
+                continue
+            return model.name
+
+    return candidates[0] if candidates else None
+
+
+def _get_model(kind: str) -> Optional[genai.GenerativeModel]:
+    cached = _MODEL_CACHE.get(kind)
+    if cached is not None:
+        return cached
+    model_name = _select_model_name(kind)
+    if not model_name:
+        return None
+    _MODEL_NAME_CACHE[kind] = model_name
+    model = _build_model(model_name)
+    _MODEL_CACHE[kind] = model
+    logger.info(f"Using Gemini {kind} model: {model_name}")
+    return model
+
+
+def _fallback_analysis(content: str, content_type: str, error: Optional[Exception] = None) -> Dict:
+    text = (content or "").strip()
+    if content_type == "image":
+        display_text = text or "תמונה"
+        search_text = text or "תמונה"
+        tags = ["תמונה"]
+    elif content_type == "link":
+        display_text = text or "קישור"
+        search_text = text or "קישור"
+        tags = ["קישור"]
+    else:
+        display_text = text[:200] + '...' if len(text) > 200 else text
+        search_text = text
+        tags = []
+
+    metadata = {'category': content_type, 'ai_error': True}
+    if tags:
+        metadata['tags'] = tags
+    if error:
+        metadata['ai_error_message'] = str(error)
+
+    return {
+        'display_text': display_text,
+        'search_text': search_text,
+        'metadata': metadata
+    }
 
 # System instruction for content analysis
 ANALYSIS_INSTRUCTION = """אתה ארכיונאי אישי חכם. תפקידך לנתח תוכן ולספק מידע מובנה.
@@ -103,7 +227,11 @@ class AIEngine:
                 import io
                 from PIL import Image
                 image = Image.open(io.BytesIO(image_data))
-                response = analysis_vision_model.generate_content([prompt, image])
+                model = _get_model("vision")
+                if model is None:
+                    logger.warning("No vision-capable Gemini model available")
+                    return _fallback_analysis(content, content_type)
+                response = model.generate_content([prompt, image])
                 
             else:
                 prompt = f"""{ANALYSIS_INSTRUCTION}
@@ -116,7 +244,11 @@ class AIEngine:
 
 החזר JSON לפי המבנה המבוקש."""
                 
-                response = analysis_text_model.generate_content(prompt)
+                model = _get_model("text")
+                if model is None:
+                    logger.warning("No text Gemini model available")
+                    return _fallback_analysis(content, content_type)
+                response = model.generate_content(prompt)
             
             # Extract JSON from response
             result_text = response.text.strip()
@@ -152,7 +284,7 @@ class AIEngine:
             }
         except Exception as e:
             logger.error(f"AI analysis failed: {e}")
-            raise
+            return _fallback_analysis(content, content_type, error=e)
     
     @staticmethod
     def generate_embedding(text: str) -> List[float]:

@@ -1,7 +1,7 @@
 """
 Search module for semantic and hybrid search
 """
-from sqlalchemy import func, and_, or_, cast, String
+from sqlalchemy import func, and_, or_, cast, String, case
 from sqlalchemy.dialects.postgresql import JSONB
 from models import Memory
 from ai_engine import AIEngine
@@ -51,6 +51,16 @@ class SearchEngine:
                 ).filter(
                     Memory.user_id == user_id
                 )
+
+                query_text = (query or '').strip()
+                text_match_expr = None
+                if query_text:
+                    keyword = f"%{query_text}%"
+                    text_match_expr = case(
+                        (Memory.display_text.ilike(keyword), 1),
+                        (Memory.search_text.ilike(keyword), 1),
+                        else_=0
+                    )
                 
                 # Apply metadata filters if provided
                 if filters:
@@ -72,15 +82,20 @@ class SearchEngine:
                 if min_similarity is not None and min_similarity > 0:
                     filtered_query = base_query.filter(similarity_expr >= min_similarity)
 
-                # Order by similarity and apply pagination
+                # Order by text match (if any) and similarity
+                order_by_columns = []
+                if text_match_expr is not None:
+                    order_by_columns.append(text_match_expr.desc())
+                order_by_columns.append(similarity_expr.desc())
+
                 results = filtered_query.order_by(
-                    similarity_expr.desc()
+                    *order_by_columns
                 ).limit(limit).offset(offset).all()
 
                 # Fallback: if threshold filtered everything, return best matches
                 if not results and filtered_query is not base_query:
                     results = base_query.order_by(
-                        similarity_expr.desc()
+                        *order_by_columns
                     ).limit(limit).offset(offset).all()
                 
                 # Convert to dictionaries and add similarity score

@@ -58,6 +58,12 @@ class Config:
     MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
     SUPPORTED_IMAGE_FORMATS = ['jpg', 'jpeg', 'png', 'webp', 'gif']
     SUPPORTED_AUDIO_FORMATS = ['ogg', 'mp3', 'wav']
+    SEMANTIC_MIN_SIMILARITY = os.getenv('SEMANTIC_MIN_SIMILARITY', '0.2')
+
+    try:
+        SEMANTIC_MIN_SIMILARITY = float(SEMANTIC_MIN_SIMILARITY)
+    except (TypeError, ValueError):
+        SEMANTIC_MIN_SIMILARITY = 0.2
     
     @classmethod
     def validate(cls):

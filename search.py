@@ -6,6 +6,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from models import Memory
 from ai_engine import AIEngine
 from database import get_db_session
+from config import Config
 import logging
 from typing import List, Dict, Optional
 
@@ -42,7 +43,8 @@ class SearchEngine:
             
             with get_db_session() as session:
                 # Build base query
-                similarity = (1 - Memory.embedding.cosine_distance(query_embedding)).label('similarity')
+                similarity_expr = (1 - Memory.embedding.cosine_distance(query_embedding))
+                similarity = similarity_expr.label('similarity')
                 base_query = session.query(
                     Memory,
                     similarity
@@ -54,15 +56,32 @@ class SearchEngine:
                 if filters:
                     for key, value in filters.items():
                         if value is not None:
-                            # Use JSONB operators for filtering
-                            base_query = base_query.filter(
-                                Memory.meta[key].astext == str(value)
-                            )
+                            if key == 'content_type':
+                                base_query = base_query.filter(
+                                    Memory.content_type == str(value)
+                                )
+                            else:
+                                # Use JSONB operators for filtering
+                                base_query = base_query.filter(
+                                    Memory.meta[key].astext == str(value)
+                                )
                 
+                # Apply minimum similarity threshold (optional)
+                min_similarity = getattr(Config, 'SEMANTIC_MIN_SIMILARITY', 0.2)
+                filtered_query = base_query
+                if min_similarity is not None and min_similarity > 0:
+                    filtered_query = base_query.filter(similarity_expr >= min_similarity)
+
                 # Order by similarity and apply pagination
-                results = base_query.order_by(
-                    similarity.desc()
+                results = filtered_query.order_by(
+                    similarity_expr.desc()
                 ).limit(limit).offset(offset).all()
+
+                # Fallback: if threshold filtered everything, return best matches
+                if not results and filtered_query is not base_query:
+                    results = base_query.order_by(
+                        similarity_expr.desc()
+                    ).limit(limit).offset(offset).all()
                 
                 # Convert to dictionaries and add similarity score
                 memories = []
@@ -73,7 +92,8 @@ class SearchEngine:
                 
                 logger.info(
                     f"Search completed for user {user_id}: "
-                    f"query='{query}', results={len(memories)}"
+                    f"query='{query}', results={len(memories)}, "
+                    f"min_similarity={min_similarity}, filters={filters}"
                 )
                 
                 return memories

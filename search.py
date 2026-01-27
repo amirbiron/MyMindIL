@@ -125,6 +125,23 @@ class SearchEngine:
         return memories
 
     @staticmethod
+    def _apply_filters(query, filters: Optional[Dict]):
+        """
+        Apply metadata/content filters to a query.
+        """
+        if not filters:
+            return query
+
+        for key, value in filters.items():
+            if value:
+                if key == 'content_type':
+                    query = query.filter(Memory.content_type == str(value))
+                else:
+                    query = query.filter(Memory.meta[key].astext == str(value))
+
+        return query
+
+    @staticmethod
     def _hybrid_search(
         session,
         user_id: int,

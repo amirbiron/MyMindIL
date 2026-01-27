@@ -49,6 +49,63 @@ def get_db_session():
         session.close()
 
 
+def ensure_search_infra(conn):
+    """
+    Ensure search infrastructure is set up (tsvector column + indexes).
+    
+    This runs DDL that create_all() doesn't handle well:
+    - GENERATED ALWAYS AS ... STORED columns
+    - Custom indexes with specific opclasses
+    
+    Safe to run multiple times (uses IF NOT EXISTS).
+    """
+    ddl_statements = [
+        # pgvector extension (redundant but safe)
+        "CREATE EXTENSION IF NOT EXISTS vector;",
+        
+        # Add tsvector generated column for full-text search
+        # Uses 'simple' config for Hebrew + code (no stemming)
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name = 'memories' AND column_name = 'search_tsv'
+            ) THEN
+                ALTER TABLE memories
+                ADD COLUMN search_tsv tsvector
+                GENERATED ALWAYS AS (
+                    to_tsvector('simple', coalesce(search_text, ''))
+                ) STORED;
+            END IF;
+        END $$;
+        """,
+        
+        # GIN index for full-text search on search_tsv
+        """
+        CREATE INDEX IF NOT EXISTS idx_memories_search_tsv
+        ON memories USING gin (search_tsv);
+        """,
+        
+        # HNSW index for vector similarity search (cosine distance)
+        # This is also defined in the model, but we ensure it exists here too
+        """
+        CREATE INDEX IF NOT EXISTS idx_memories_embedding_hnsw
+        ON memories USING hnsw (embedding vector_cosine_ops);
+        """,
+    ]
+    
+    for ddl in ddl_statements:
+        try:
+            conn.execute(text(ddl))
+        except Exception as e:
+            # Log but don't fail - some statements might fail on certain DB versions
+            logger.warning(f"DDL statement warning: {e}")
+    
+    conn.commit()
+    logger.info("Search infrastructure verified/created")
+
+
 def init_db():
     """
     Initialize database: create pgvector extension and all tables
@@ -63,6 +120,10 @@ def init_db():
         # Create all tables
         Base.metadata.create_all(engine)
         logger.info("Database tables created successfully")
+        
+        # Ensure search infrastructure (tsvector, indexes)
+        with engine.connect() as conn:
+            ensure_search_infra(conn)
         
         return True
     except Exception as e:

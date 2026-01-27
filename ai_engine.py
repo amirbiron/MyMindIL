@@ -287,61 +287,35 @@ class AIEngine:
             return _fallback_analysis(content, content_type, error=e)
     
     @staticmethod
-    def generate_embedding(text: str) -> List[float]:
+    def get_embedding(text: str, task_type: str = "RETRIEVAL_DOCUMENT") -> List[float]:
         """
-        Generate embedding vector for text using Gemini Embedding API
-        
-        Args:
-            text: Text to embed
-            
-        Returns:
-            List of floats representing the embedding vector
+        Generates embedding with specific task type to improve accuracy.
+        task_type options: 'RETRIEVAL_DOCUMENT' (for storage) or 'RETRIEVAL_QUERY' (for search)
         """
         try:
             result = genai.embed_content(
-                model=Config.EMBEDDING_MODEL,
+                model="models/text-multilingual-embedding-002",
                 content=text,
-                task_type="retrieval_document"
+                task_type=task_type,
+                # כותרת נדרשת רק עבור DOCUMENT, אפשר לשים ריק או קבוע
+                title="Memory" if task_type == "RETRIEVAL_DOCUMENT" else None
             )
-            
-            embedding = result['embedding']
-            
-            # Verify dimension
-            if len(embedding) != Config.EMBEDDING_DIMENSION:
-                logger.warning(
-                    f"Unexpected embedding dimension: {len(embedding)} "
-                    f"(expected {Config.EMBEDDING_DIMENSION})"
-                )
-            
-            return embedding
-            
+            return result['embedding']
         except Exception as e:
-            logger.error(f"Embedding generation failed: {e}")
-            raise
-    
+            logger.error(f"Error generating embedding: {e}")
+            return []
+
+    # מעטפת לשמירה (Ingestion)
+    @staticmethod
+    def generate_embedding(text: str) -> List[float]:
+        # כאן אנחנו אומרים לו: זה מידע שנשמר במסד נתונים
+        return AIEngine.get_embedding(text, task_type="RETRIEVAL_DOCUMENT")
+
+    # מעטפת לחיפוש (Search)
     @staticmethod
     def generate_query_embedding(query: str) -> List[float]:
-        """
-        Generate embedding for search query
-        
-        Args:
-            query: Search query text
-            
-        Returns:
-            List of floats representing the embedding vector
-        """
-        try:
-            result = genai.embed_content(
-                model=Config.EMBEDDING_MODEL,
-                content=query,
-                task_type="retrieval_query"
-            )
-            
-            return result['embedding']
-            
-        except Exception as e:
-            logger.error(f"Query embedding generation failed: {e}")
-            raise
+        # כאן אנחנו אומרים לו: זו שאילתה של משתמש שרוצה למצוא משהו
+        return AIEngine.get_embedding(query, task_type="RETRIEVAL_QUERY")
     
     @staticmethod
     def batch_generate_embeddings(texts: List[str]) -> List[List[float]]:

@@ -17,8 +17,20 @@ class Config:
     
     # Database
     DATABASE_URL = os.getenv('DATABASE_URL')
-    if DATABASE_URL and DATABASE_URL.startswith('postgres://'):
-        DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+    if DATABASE_URL:
+        # Normalize common Postgres URL formats:
+        # - Render/Heroku style: postgres://...
+        # - SQLAlchemy expects: postgresql+psycopg://... for psycopg (v3)
+        if DATABASE_URL.startswith('postgres://'):
+            DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+
+        # If no explicit driver is specified, default to psycopg (v3).
+        if DATABASE_URL.startswith('postgresql://'):
+            DATABASE_URL = DATABASE_URL.replace('postgresql://', 'postgresql+psycopg://', 1)
+
+        # If an explicit psycopg2 driver is specified but not installed, prefer psycopg (v3).
+        if DATABASE_URL.startswith('postgresql+psycopg2://'):
+            DATABASE_URL = DATABASE_URL.replace('postgresql+psycopg2://', 'postgresql+psycopg://', 1)
     
     # Telegram
     TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')

@@ -51,17 +51,23 @@ def get_db_session():
 
 def ensure_search_infra(conn):
     """
-    Ensure search infrastructure is set up (tsvector column + indexes).
+    Ensure search infrastructure is set up (tsvector column + indexes +
+    embedding_model column).
     
     This runs DDL that create_all() doesn't handle well:
     - GENERATED ALWAYS AS ... STORED columns
     - Custom indexes with specific opclasses
+    - Columns added to an already existing table
     
     Safe to run multiple times (uses IF NOT EXISTS).
     """
     ddl_statements = [
         # pgvector extension (redundant but safe)
         "CREATE EXTENSION IF NOT EXISTS vector;",
+        
+        # create_all() לא מוסיף עמודות לטבלה קיימת. עמודה זו מוצהרת גם במודל
+        # (Memory.embedding_model), כך שמסד חדש ומסד קיים מגיעים לאותה סכמה.
+        "ALTER TABLE memories ADD COLUMN IF NOT EXISTS embedding_model VARCHAR(100);",
         
         # Add tsvector generated column for full-text search
         # Uses 'simple' config for Hebrew + code (no stemming)

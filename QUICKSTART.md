@@ -66,7 +66,7 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 2
 ## תכונות מובנות
 
 ### 🤖 AI Features
-- ✅ Gemini 1.5 Flash לניתוח תוכן
+- ✅ Gemini 3.8 Flash לניתוח תוכן
 - ✅ חילוץ מטא-דאטה אוטומטי (JSON)
 - ✅ סיווג לקטגוריות
 - ✅ זיהוי ישויות (NER)
@@ -145,15 +145,15 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 2
 - Flask 3.0
 - SQLAlchemy 2.0
 - python-telegram-bot 21.0
-- google-generativeai 0.3+
+- google-genai 2.29
 
 ### Database
 - PostgreSQL 15+
 - pgvector 0.2+
 
 ### AI
-- Gemini 1.5 Flash (analysis)
-- text-embedding-004 (768d vectors)
+- Gemini 3.8 Flash (analysis, text + images)
+- gemini-embedding-2 (768d vectors)
 
 ### Frontend
 - Vanilla JavaScript

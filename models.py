@@ -32,6 +32,10 @@ class Memory(Base):
     
     # Vector embedding for semantic search
     embedding = Column(Vector(Config.EMBEDDING_DIMENSION), nullable=False)
+    # המודל שיצר את הווקטור. וקטורים ממודלים שונים אינם ברי השוואה, ולכן החיפוש
+    # הסמנטי משווה רק לשורות של המודל הנוכחי, ו-reembed_memories.py מעדכן את השאר.
+    # NULL = שורה מלפני העמודה, שנוצרה ב-text-embedding-004 (נסגר ב-14.1.2026).
+    embedding_model = Column(String(100), nullable=True)
     
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

@@ -5,7 +5,7 @@
 ## ✨ תכונות
 
 - 📥 **קליטה אוטומטית**: העבר כל הודעה והיא נשמרת אוטומטית
-- 🤖 **AI חכם**: Gemini 1.5 Flash מנתח ומסווג את התוכן
+- 🤖 **AI חכם**: Gemini 3.8 Flash מנתח ומסווג את התוכן
 - 🔍 **חיפוש סמנטי**: מצא תוכן לפי משמעות, לא רק מילים מדויקות
 - 🎨 **ממשק מהמם**: Web App בסגנון Pinterest עם תמיכה מלאה בעברית
 - 📊 **מטא-דאטה מובנית**: סכומים, תאריכים, קטגוריות, תגיות ועוד
@@ -20,7 +20,7 @@
          │
          ▼
 ┌─────────────────┐
-│   AI Engine     │  ← Gemini 1.5 Flash + Embeddings
+│   AI Engine     │  ← Gemini 3.8 Flash + Embeddings
 │  (Gemini API)   │
 └────────┬────────┘
          │
@@ -284,6 +284,7 @@ mymindil/
 ├── database.py         # Database connection & session
 ├── models.py           # SQLAlchemy models
 ├── ai_engine.py        # Gemini API wrapper
+├── reembed_memories.py # Re-embeds saved memories after an embedding-model change
 ├── search.py           # Search engine
 ├── config.py           # Configuration
 ├── requirements.txt    # Dependencies
@@ -370,11 +371,24 @@ python -c "from database import Base, engine; Base.metadata.drop_all(engine); Ba
 ### AI לא עובד
 
 ```bash
-# בדוק API key
+# בדוק API key (המפתח בכותרת ולא ב-URL, כדי שלא יישאר בלוגים ובהיסטוריה)
 curl -H "Content-Type: application/json" \
+  -H "x-goog-api-key: YOUR_KEY" \
   -d '{"contents":[{"parts":[{"text":"test"}]}]}' \
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=YOUR_KEY"
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
 ```
+
+שגיאת `404 models/... is not found` פירושה שגוגל סגרה את המודל. המודלים מוגדרים ב-`config.py` (`GEMINI_MODEL`, `EMBEDDING_MODEL`); לפני החלפה כדאי לבדוק את [דף ההוצאות משימוש](https://ai.google.dev/gemini-api/docs/deprecations), ולוודא שאין ב-Render משתנה `GEMINI_MODEL` ישן שדורס את ברירת המחדל.
+
+### החלפת מודל ה-embedding
+
+וקטורים ממודלים שונים אינם ברי השוואה, ולכן כל זיכרון שמור מסומן במודל שיצר אותו (`embedding_model`), והחיפוש הסמנטי משווה רק לזיכרונות של המודל הנוכחי. זיכרונות ממודל אחר עדיין נמצאים בחיפוש הטקסטואלי. אחרי החלפת `EMBEDDING_MODEL` (או אחרי השדרוג מ-`text-embedding-004`) מריצים פעם אחת, למשל מה-Shell של השירות ב-Render:
+
+```bash
+python reembed_memories.py
+```
+
+הסקריפט מעדכן רק זיכרונות שעוד לא עברו, ולכן אפשר להריץ אותו שוב בבטחה אם נעצר באמצע.
 
 ## 📝 License
 

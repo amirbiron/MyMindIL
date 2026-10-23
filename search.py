@@ -94,7 +94,9 @@ class SearchEngine:
         
         # Build query
         stmt = session.query(Memory, similarity_expr.label('similarity')).filter(
-            Memory.user_id == user_id
+            Memory.user_id == user_id,
+            # מרחק בין וקטורים של מודלים שונים חסר משמעות (ראה Memory.embedding_model)
+            Memory.embedding_model == AIEngine.EMBED_MODEL,
         )
         
         # Apply filters
@@ -163,7 +165,12 @@ class SearchEngine:
         vec_query = session.query(
             Memory.id.label("id"),
             (1 - distance_expr).label("vec_score")
-        ).filter(Memory.user_id == user_id)
+        ).filter(
+            Memory.user_id == user_id,
+            # מרחק בין וקטורים של מודלים שונים חסר משמעות (ראה Memory.embedding_model).
+            # שורות ממודל אחר עדיין נמצאות בחיפוש הטקסטואלי שלמטה.
+            Memory.embedding_model == AIEngine.EMBED_MODEL,
+        )
         
         vec_query = SearchEngine._apply_filters(vec_query, filters)
         vec_query = vec_query.order_by(distance_expr.asc()).limit(vec_candidates)

@@ -2,139 +2,101 @@
 AI Engine - Wrapper for Google Gemini API
 Handles content analysis and embedding generation
 """
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+from google import genai
+from google.genai import types
+import io
 import json
 import logging
 import re
 import threading
-from typing import Dict, List, Optional, Iterable
+from typing import Dict, List, Optional
+from PIL import Image
 from config import Config
 
 logger = logging.getLogger(__name__)
 
-# Configure Gemini
-genai.configure(api_key=Config.GOOGLE_API_KEY)
+# ה-SDK google-generativeai הוצא משימוש ב-30.11.2025 ואינו מתוחזק; google-genai
+# הוא המחליף הרשמי. מקור: https://ai.google.dev/gemini-api/docs/libraries
+#
+# הלקוח נבנה בקריאה הראשונה ולא בזמן import: genai.Client זורק ValueError כשאין
+# מפתח, וזה לא אמור להפיל את טעינת המודול. מפתח חסר מדווח ב-Config.validate.
+_CLIENT: Optional[genai.Client] = None
+_CLIENT_LOCK = threading.Lock()
 
-# Initialize models
-_MODEL_LIST = None
-_MODEL_LIST_LOCK = threading.Lock()
-_MODEL_CACHE = {"text": None, "vision": None}
-_MODEL_NAME_CACHE = {"text": None, "vision": None}
+# ל-SDK אין timeout כברירת מחדל (HttpOptions.timeout=None), והקריאות רצות בתוך
+# בקשת ה-webhook. ניתוח + embedding חייבים להסתיים יחד לפני ה-timeout של gunicorn
+# (120 שניות), ולכן תקרה של 45 שניות לכל קריאה.
+_REQUEST_TIMEOUT_MS = 45_000
+
+_SAFETY_SETTINGS = [
+    types.SafetySetting(category=category, threshold=types.HarmBlockThreshold.BLOCK_NONE)
+    for category in (
+        types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+        types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+    )
+]
 
 
-def _build_model(model_name: str) -> genai.GenerativeModel:
-    return genai.GenerativeModel(
-        model_name=model_name,
-        generation_config={
-            'temperature': 0.3,
-            'top_p': 0.95,
-            'top_k': 40,
-            'max_output_tokens': 2048,
-        },
-        safety_settings={
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-        }
+def _get_client() -> genai.Client:
+    global _CLIENT
+    if _CLIENT is not None:
+        return _CLIENT
+    with _CLIENT_LOCK:
+        if _CLIENT is None:
+            _CLIENT = genai.Client(
+                api_key=Config.GOOGLE_API_KEY,
+                http_options=types.HttpOptions(timeout=_REQUEST_TIMEOUT_MS),
+            )
+    return _CLIENT
+
+
+def _generation_config() -> types.GenerateContentConfig:
+    # max_output_tokens כולל את טוקני החשיבה, ולכן תקרה נמוכה חותכת את ה-JSON או
+    # מחזירה תשובה ריקה. להורדת זמן ועלות מורידים את thinking_level, לא את התקרה.
+    # מקור: https://ai.google.dev/gemini-api/docs/thinking
+    # temperature / top_p / top_k הוצאו משימוש החל מ-Gemini 3 ולכן אינם נשלחים.
+    # מקור: https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.8
+    thinking_config = None
+    if Config.GEMINI_THINKING_LEVEL:
+        thinking_config = types.ThinkingConfig(thinking_level=Config.GEMINI_THINKING_LEVEL)
+    return types.GenerateContentConfig(
+        # JSON mode: המודל מחזיר JSON בלבד, בלי גדר markdown סביבו.
+        response_mime_type='application/json',
+        safety_settings=_SAFETY_SETTINGS,
+        thinking_config=thinking_config,
+        # אין כלים בקריאה הזו. בלי הכיבוי ה-SDK רושם "AFC is enabled" ב-INFO על כל ניתוח.
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
     )
 
 
-def _normalize_model_name(name: str) -> str:
-    if name.startswith('models/'):
-        return name
-    return f"models/{name}"
+def _image_part(image_data: bytes) -> types.Part:
+    # שולחים את הבייטים המקוריים עם ה-MIME שזוהה. מעבר אובייקט PIL ל-SDK היה מקודד
+    # מחדש כ-PNG (pil_to_blob), ותמונת JPEG מטלגרם הייתה גדלה פי כמה בדרך.
+    image = Image.open(io.BytesIO(image_data))
+    mime_type = Image.MIME.get(image.format or '')
+    if not mime_type:
+        raise ValueError(f"Unsupported image format: {image.format!r}")
+    return types.Part.from_bytes(data=image_data, mime_type=mime_type)
 
 
-def _dedupe(values: Iterable[str]) -> List[str]:
-    seen = set()
-    result = []
-    for value in values:
-        if not value:
-            continue
-        if value in seen:
-            continue
-        seen.add(value)
-        result.append(value)
+def _response_json(response: types.GenerateContentResponse) -> Dict:
+    text = response.text
+    if not text:
+        # תשובה בלי טקסט: חסימה, או חיתוך לפני שנכתב פלט. הסיבה נכנסת לשגיאה כדי
+        # שתגיע ללוג ול-ai_error_message ולא תיבלע כ-"NoneType has no strip".
+        finish_reason = None
+        if response.candidates:
+            finish_reason = response.candidates[0].finish_reason
+        raise ValueError(
+            f"Empty model response (finish_reason={finish_reason}, "
+            f"prompt_feedback={response.prompt_feedback})"
+        )
+    result = json.loads(text)
+    if not isinstance(result, dict):
+        raise ValueError(f"Expected a JSON object, got {type(result).__name__}")
     return result
-
-
-def _looks_like_vision(model_name: str) -> bool:
-    lower = model_name.lower()
-    return "vision" in lower or "multimodal" in lower or "1.5" in lower
-
-
-def _list_available_models() -> Dict[str, object]:
-    global _MODEL_LIST
-    if _MODEL_LIST is not None:
-        return _MODEL_LIST
-    with _MODEL_LIST_LOCK:
-        if _MODEL_LIST is not None:
-            return _MODEL_LIST
-        try:
-            models = list(genai.list_models())
-            _MODEL_LIST = {model.name: model for model in models}
-        except Exception as e:
-            logger.warning(f"Failed to list Gemini models: {e}")
-            _MODEL_LIST = {}
-    return _MODEL_LIST
-
-
-def _select_model_name(kind: str) -> Optional[str]:
-    if kind == "vision":
-        candidates = _dedupe([
-            getattr(Config, 'GEMINI_VISION_MODEL', None),
-            getattr(Config, 'GEMINI_MODEL', None),
-            "gemini-1.5-pro",
-            "gemini-1.5-flash",
-            "gemini-1.0-pro-vision-latest",
-            "gemini-pro-vision",
-        ])
-    else:
-        candidates = _dedupe([
-            getattr(Config, 'GEMINI_TEXT_MODEL', None),
-            getattr(Config, 'GEMINI_MODEL', None),
-            "gemini-1.5-pro",
-            "gemini-1.5-flash",
-            "gemini-pro",
-        ])
-
-    available = _list_available_models()
-    if available:
-        normalized_candidates = [_normalize_model_name(name) for name in candidates]
-        for name in normalized_candidates:
-            model = available.get(name)
-            if not model:
-                continue
-            if "generateContent" not in model.supported_generation_methods:
-                continue
-            if kind == "vision" and not _looks_like_vision(model.name):
-                continue
-            return model.name
-
-        for model in available.values():
-            if "generateContent" not in model.supported_generation_methods:
-                continue
-            if kind == "vision" and not _looks_like_vision(model.name):
-                continue
-            return model.name
-
-    return candidates[0] if candidates else None
-
-
-def _get_model(kind: str) -> Optional[genai.GenerativeModel]:
-    cached = _MODEL_CACHE.get(kind)
-    if cached is not None:
-        return cached
-    model_name = _select_model_name(kind)
-    if not model_name:
-        return None
-    _MODEL_NAME_CACHE[kind] = model_name
-    model = _build_model(model_name)
-    _MODEL_CACHE[kind] = model
-    logger.info(f"Using Gemini {kind} model: {model_name}")
-    return model
 
 
 def _fallback_analysis(content: str, content_type: str, error: Optional[Exception] = None) -> Dict:
@@ -223,16 +185,7 @@ class AIEngine:
 טקסט נלווה (אם יש): {content}
 
 החזר JSON לפי המבנה המבוקש."""
-                
-                # Upload image to Gemini
-                import io
-                from PIL import Image
-                image = Image.open(io.BytesIO(image_data))
-                model = _get_model("vision")
-                if model is None:
-                    logger.warning("No vision-capable Gemini model available")
-                    return _fallback_analysis(content, content_type)
-                response = model.generate_content([prompt, image])
+                contents = [prompt, _image_part(image_data)]
                 
             else:
                 prompt = f"""{ANALYSIS_INSTRUCTION}
@@ -244,32 +197,23 @@ class AIEngine:
 {content}
 
 החזר JSON לפי המבנה המבוקש."""
+                contents = prompt
                 
-                model = _get_model("text")
-                if model is None:
-                    logger.warning("No text Gemini model available")
-                    return _fallback_analysis(content, content_type)
-                response = model.generate_content(prompt)
-            
-            # Extract JSON from response
-            result_text = response.text.strip()
-            
-            # Clean markdown code blocks if present
-            if result_text.startswith('```'):
-                result_text = result_text.split('```')[1]
-                if result_text.startswith('json'):
-                    result_text = result_text[4:]
-                result_text = result_text.strip()
-            
-            # Parse JSON
-            result = json.loads(result_text)
+            response = _get_client().models.generate_content(
+                model=Config.GEMINI_MODEL,
+                contents=contents,
+                config=_generation_config(),
+            )
+            result = _response_json(response)
             
             # Validate required fields
             if 'display_text' not in result:
                 result['display_text'] = content[:200] + '...' if len(content) > 200 else content
             if 'search_text' not in result:
                 result['search_text'] = content
-            if 'metadata' not in result:
+            # ה-handlers ניגשים ל-metadata כמילון (.get, השמת url), ולכן ערך מכל
+            # טיפוס אחר שהמודל החזיר מוחלף במילון ריק.
+            if not isinstance(result.get('metadata'), dict):
                 result['metadata'] = {}
             
             logger.info(f"Successfully analyzed {content_type} content")
@@ -288,58 +232,54 @@ class AIEngine:
             return _fallback_analysis(content, content_type, error=e)
     
     # Model and dimension constants for embeddings
-    # NOTE: task_type is NOT supported by text-embedding-004 (only by embedding-001)
-    # See: https://ai.google.dev/api/embeddings
-    EMBED_MODEL = "models/text-embedding-004"
+    EMBED_MODEL = Config.EMBEDDING_MODEL
     EMBED_DIM = Config.EMBEDDING_DIMENSION  # 768
 
     @staticmethod
-    def generate_embedding(text: str) -> List[float]:
+    def build_document_text(display_text: str, search_text: str, content_type: str) -> str:
         """
-        Generate embedding for text using text-embedding-004.
+        The exact text a memory is embedded from.
+
+        Shared by every writer of Memory.embedding (the bot handlers and
+        reembed_memories.py), so a re-embedded vector matches a fresh one.
+        """
+        # gemini-embedding-2 לא מקבל task_type; את סוג המשימה מבטאים בפורמט הטקסט.
+        # בחיפוש א-סימטרי המסמך נכתב "title: ... | text: ...", ובלי כותרת - title: none.
+        # מקור: https://ai.google.dev/gemini-api/docs/embeddings
+        body = f"""תיאור: {display_text}
+מילות חיפוש: {search_text}
+סוג תוכן: {content_type}"""
+        return f"title: none | text: {body}"
+
+    @staticmethod
+    def _embed(text: str) -> List[float]:
+        """
+        Generate a single embedding vector with EMBED_MODEL.
         
         IMPORTANT: 
-        - No fallback to other models (to avoid dimension mismatch)
-        - No task_type (not supported by text-embedding-004)
-        - Enforces output_dimensionality for consistency
+        - No fallback to other models (to avoid mixing embedding spaces)
         - Raises exception on failure (don't save garbage to DB)
-        
-        Args:
-            text: Text to embed
-            
-        Returns:
-            List of floats (embedding vector)
             
         Raises:
             ValueError: If text is empty or embedding fails
         """
         text = (text or "").strip()
         if not text:
-            raise ValueError("generate_embedding: empty text")
+            raise ValueError("embedding: empty text")
         
         try:
-            try:
-                result = genai.embed_content(
-                    model=AIEngine.EMBED_MODEL,
-                    content=text,
-                    output_dimensionality=AIEngine.EMBED_DIM,  # Enforce consistent dimensions
-                )
-            except TypeError as e:
-                if "output_dimensionality" not in str(e):
-                    raise
-                logger.warning(
-                    "embed_content does not support output_dimensionality; "
-                    "retrying without it"
-                )
-                result = genai.embed_content(
-                    model=AIEngine.EMBED_MODEL,
-                    content=text,
-                )
+            # ב-gemini-embedding-2 וקטור מקוצר (768 מתוך 3072) מנורמל אוטומטית.
+            # מקור: https://ai.google.dev/gemini-api/docs/embeddings
+            result = _get_client().models.embed_content(
+                model=AIEngine.EMBED_MODEL,
+                contents=text,
+                config=types.EmbedContentConfig(output_dimensionality=AIEngine.EMBED_DIM),
+            )
             
-            # Handle different response formats from the API
-            embedding = result.get('embedding')
-            if isinstance(embedding, dict) and 'values' in embedding:
-                embedding = embedding['values']
+            embeddings = result.embeddings or []
+            if len(embeddings) != 1:
+                raise ValueError(f"Expected 1 embedding, got {len(embeddings)}")
+            embedding = embeddings[0].values
             
             if not embedding or len(embedding) != AIEngine.EMBED_DIM:
                 raise ValueError(
@@ -354,13 +294,27 @@ class AIEngine:
             raise ValueError(f"Failed to generate embedding: {e}")
 
     @staticmethod
+    def embed_memory(display_text: str, search_text: str, content_type: str) -> Dict:
+        """
+        Embed a memory and return the Memory columns that describe the vector.
+
+        The vector and the model that produced it always travel together, so
+        no writer can store one without the other:
+            Memory(..., **AIEngine.embed_memory(...))
+
+        Returns:
+            {'embedding': [...], 'embedding_model': EMBED_MODEL}
+        """
+        text = AIEngine.build_document_text(display_text, search_text, content_type)
+        return {
+            'embedding': AIEngine._embed(text),
+            'embedding_model': AIEngine.EMBED_MODEL,
+        }
+
+    @staticmethod
     def generate_query_embedding(query: str) -> List[float]:
         """
         Generate embedding for search query.
-        
-        NOTE: With text-embedding-004, there's no distinction between document
-        and query embeddings (task_type is not supported). We use the same
-        function for both, and rely on hybrid search for better results.
         
         Args:
             query: Search query text
@@ -368,7 +322,9 @@ class AIEngine:
         Returns:
             List of floats (embedding vector)
         """
-        return AIEngine.generate_embedding(query)
+        # הצד של השאילתה בפורמט הא-סימטרי שמתאים ל-build_document_text.
+        # מקור: https://ai.google.dev/gemini-api/docs/embeddings
+        return AIEngine._embed(f"task: search result | query: {query}")
     
     # Regex pattern for detecting code-like content
     CODE_HINTS_PATTERN = re.compile(
@@ -400,29 +356,5 @@ class AIEngine:
             AIEngine.CODE_HINTS_PATTERN.search(search_text or "")
         )
         return result
-
-    @staticmethod
-    def batch_generate_embeddings(texts: List[str]) -> List[List[float]]:
-        """
-        Generate embeddings for multiple texts in batch
-        
-        Args:
-            texts: List of texts to embed
-            
-        Returns:
-            List of embedding vectors
-        """
-        try:
-            embeddings = []
-            # Gemini API supports batch embedding
-            for text in texts:
-                embedding = AIEngine.generate_embedding(text)
-                embeddings.append(embedding)
-            
-            return embeddings
-            
-        except Exception as e:
-            logger.error(f"Batch embedding generation failed: {e}")
-            raise
 
 

@@ -41,11 +41,20 @@ class Config:
     GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
     
     # AI Models
-    GEMINI_TEXT_MODEL = os.getenv('GEMINI_TEXT_MODEL', 'gemini-pro')
-    GEMINI_VISION_MODEL = os.getenv('GEMINI_VISION_MODEL', 'gemini-pro-vision')
-    # Backward-compatible single model setting (defaults to text model)
-    GEMINI_MODEL = os.getenv('GEMINI_MODEL', GEMINI_TEXT_MODEL)
-    EMBEDDING_MODEL = 'models/text-embedding-004'
+    # מודל אחד לטקסט ולתמונות: מודלי Gemini הנוכחיים מקבלים טקסט ותמונה באותה
+    # קריאה, ואין יותר מודל ראייה נפרד. מודל יציב ולא preview, כי preview נסגר
+    # בהתראה של שבועיים בלבד.
+    # מקור: https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash
+    GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-3.8-flash')
+    # רמת החשיבה תלויה במודל: ב-gemini-3.8-flash נתמכות low/medium/high, ו-minimal
+    # מחזיר שגיאה. low מקצר את זמן התגובה, וזה מה שמשתמש שמחכה ל"⏳ שומר..." צריך.
+    # מי שמחליף את GEMINI_MODEL למודל בלי thinking_level - מגדיר כאן מחרוזת ריקה.
+    # מקור: https://ai.google.dev/gemini-api/docs/thinking
+    GEMINI_THINKING_LEVEL = os.getenv('GEMINI_THINKING_LEVEL', 'low').strip()
+    # לא ניתן לשינוי דרך env בכוונה: וקטורים ממודלים שונים אינם ברי השוואה, והחלפה
+    # מחייבת הרצה של reembed_memories.py על כל הזיכרונות השמורים.
+    # מקור: https://ai.google.dev/gemini-api/docs/embeddings
+    EMBEDDING_MODEL = 'gemini-embedding-2'
     EMBEDDING_DIMENSION = 768
     
     # Sentry (Optional)

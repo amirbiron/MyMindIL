@@ -13,7 +13,7 @@ pgvector==0.2.5
 alembic==1.13.1
 
 # Google AI
-google-generativeai==0.3.2
+google-genai==2.29.0
 
 # Utilities
 requests==2.31.0

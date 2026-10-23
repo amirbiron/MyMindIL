@@ -6,7 +6,7 @@ Implements:
 - Full-text search using PostgreSQL tsvector
 - Hybrid search combining both using Reciprocal Rank Fusion (RRF)
 """
-from sqlalchemy import func, and_, or_, cast, String, select, desc, case, text, literal
+from sqlalchemy import func, and_, or_, cast, String, select, desc, case, literal, literal_column
 from sqlalchemy.dialects.postgresql import JSONB
 from models import Memory
 from ai_engine import AIEngine
@@ -194,15 +194,18 @@ class SearchEngine:
             tsq = func.plainto_tsquery('simple', query_text)
 
         # שימוש ב-search_tsv הקיים
-        # שים לב: אנחנו משתמשים ב-text() כדי לגשת לעמודה בצורה בטוחה אם היא לא במודל
-        text_rank = func.ts_rank_cd(text("memories.search_tsv"), tsq)
+        # העמודה אינה במודל (נוצרת ב-ensure_search_infra), ולכן ניגשים אליה בשמה.
+        # literal_column ולא text(): ב-SQLAlchemy 2.0 ל-TextClause אין .op(), והחיפוש
+        # ההיברידי קרס על AttributeError בכל קריאה.
+        search_tsv = literal_column("memories.search_tsv")
+        text_rank = func.ts_rank_cd(search_tsv, tsq)
         
         text_query = session.query(
             Memory.id.label("id"),
             text_rank.label("text_score")
         ).filter(
             Memory.user_id == user_id,
-            text("memories.search_tsv").op("@@")(tsq)
+            search_tsv.op("@@")(tsq)
         )
         
         text_query = SearchEngine._apply_filters(text_query, filters)
